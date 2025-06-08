@@ -1,0 +1,16 @@
+chatbot-nadia/
+├── .env.example
+├── estructura.py
+├── generate_manifest.py
+├── .python-version
+├── pyproject.toml
+├── README.md
+├── .gitignore
+├── requirements.txt
+└── estructura.txt
+├── tests/
+├── src/
+│   ├── user_bot/
+│   │   ├── clients/
+│   │   ├── agents/
+│   │   ├── core/
