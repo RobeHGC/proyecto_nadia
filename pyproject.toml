@@ -1,8 +1,43 @@
+# ───────────────────────────────────────────────────
+# 1 Metadatos mínimos del proyecto
+# ───────────────────────────────────────────────────
+[project]
+name = "chatbot_nadia"
+version = "0.1.0"
+description = "Bot girlfriend project"
+authors = [{ name = "Tu Nombre", email = "tu@email.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+# Si el proyecto aún no tiene dependencias obligatorias, déjalo vacío:
+# dependencies = ["openai>=1.17,<2.0", "httpx>=0.25,<1.0", "redis>=4.6", "telethon>=1.34"]
+
+# ───────────────────────────────────────────────────
+# 2 Cómo construir / instalar (Setuptools)
+# ───────────────────────────────────────────────────
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Lista explícita de sub-paquetes que quieres exponer al importar
+packages = [
+    "agents",
+    "memory",
+    "llms",
+    "utils"
+]
+
+# ───────────────────────────────────────────────────
+# 3 Ruff (linter / formateador)
+# ───────────────────────────────────────────────────
 [tool.ruff]
 line-length = 88
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
+# ───────────────────────────────────────────────────
+# 4 Pytest
+# ───────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"

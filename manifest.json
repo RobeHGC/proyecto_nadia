@@ -1,0 +1,219 @@
+{
+  "modules": [
+    {
+      "path": "userbot.py",
+      "docstring": "Punto de entrada principal del bot de Telegram.",
+      "classes": [
+        {
+          "name": "UserBot",
+          "docstring": "Cliente principal de Telegram que maneja eventos de mensajes.",
+          "methods": [
+            {
+              "name": "__init__",
+              "args": [
+                "self",
+                "config"
+              ],
+              "docstring": "Inicializa el bot con la configuración dada."
+            }
+          ]
+        }
+      ],
+      "functions": []
+    },
+    {
+      "path": "generate_manifest.py",
+      "docstring": null,
+      "classes": [],
+      "functions": [
+        {
+          "name": "parse_python_file",
+          "args": [
+            "path"
+          ],
+          "docstring": "Parsea un archivo .py y extrae estructura de clases y funciones."
+        },
+        {
+          "name": "generate_manifest",
+          "args": [
+            "root_dir"
+          ],
+          "docstring": "Recorre root_dir y construye el manifest con todos los .py, ignorando estructura.py."
+        }
+      ]
+    },
+    {
+      "path": "__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "llms/openai_client.py",
+      "docstring": "Cliente wrapper para la API de OpenAI.",
+      "classes": [
+        {
+          "name": "OpenAIClient",
+          "docstring": "Wrapper para interactuar con la API de OpenAI.",
+          "methods": [
+            {
+              "name": "__init__",
+              "args": [
+                "self",
+                "api_key",
+                "model"
+              ],
+              "docstring": "Inicializa el cliente de OpenAI."
+            }
+          ]
+        }
+      ],
+      "functions": []
+    },
+    {
+      "path": "llms/__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "memory/user_memory.py",
+      "docstring": "Gestor de memoria para almacenar contexto de usuarios.",
+      "classes": [
+        {
+          "name": "UserMemoryManager",
+          "docstring": "Gestiona la memoria y contexto de cada usuario.",
+          "methods": [
+            {
+              "name": "__init__",
+              "args": [
+                "self",
+                "redis_url"
+              ],
+              "docstring": "Inicializa el gestor con conexión a Redis."
+            }
+          ]
+        }
+      ],
+      "functions": []
+    },
+    {
+      "path": "memory/__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "agents/__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "agents/supervisor_agent.py",
+      "docstring": "Agente supervisor que orquesta la lógica de conversación.",
+      "classes": [
+        {
+          "name": "SupervisorAgent",
+          "docstring": "Orquestador principal de la lógica conversacional.",
+          "methods": [
+            {
+              "name": "__init__",
+              "args": [
+                "self",
+                "llm_client",
+                "memory"
+              ],
+              "docstring": "Inicializa el supervisor con sus dependencias."
+            },
+            {
+              "name": "_build_prompt",
+              "args": [
+                "self",
+                "message",
+                "context"
+              ],
+              "docstring": "Construye el prompt para el LLM."
+            }
+          ]
+        }
+      ],
+      "functions": []
+    },
+    {
+      "path": "tests/test_greet.py",
+      "docstring": "Tests básicos para el flujo de saludo.",
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "tests/test_redis_connection.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "tests/__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "tests/conftest.py",
+      "docstring": "Configuración de fixtures para pytest.",
+      "classes": [],
+      "functions": [
+        {
+          "name": "mock_llm",
+          "args": [],
+          "docstring": "Mock del cliente LLM."
+        },
+        {
+          "name": "mock_memory",
+          "args": [],
+          "docstring": "Mock del gestor de memoria."
+        },
+        {
+          "name": "supervisor",
+          "args": [
+            "mock_llm",
+            "mock_memory"
+          ],
+          "docstring": "Fixture del supervisor con mocks."
+        }
+      ]
+    },
+    {
+      "path": "utils/validators.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    },
+    {
+      "path": "utils/config.py",
+      "docstring": "Configuración centralizada del proyecto.",
+      "classes": [
+        {
+          "name": "Config",
+          "docstring": "Configuración de la aplicación.",
+          "methods": [
+            {
+              "name": "from_env",
+              "args": [
+                "cls"
+              ],
+              "docstring": "Crea configuración desde variables de entorno."
+            }
+          ]
+        }
+      ],
+      "functions": []
+    },
+    {
+      "path": "utils/__init__.py",
+      "docstring": null,
+      "classes": [],
+      "functions": []
+    }
+  ]
+}

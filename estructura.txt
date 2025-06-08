@@ -1,16 +1,64 @@
-chatbot-nadia/
+chatbot_nadia/
 ├── .env.example
+├── userbot.py
 ├── estructura.py
 ├── generate_manifest.py
 ├── .python-version
+├── manifest.json
 ├── pyproject.toml
+├── __init__.py
+├── .env
 ├── README.md
 ├── .gitignore
 ├── requirements.txt
 └── estructura.txt
+├── llms/
+│   ├── openai_client.py
+│   └── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── openai_client.cpython-311.pyc
+├── memory/
+│   ├── user_memory.py
+│   └── __init__.py
+│   ├── __pycache__/
+│   │   ├── user_memory.cpython-311.pyc
+│   │   └── __init__.cpython-311.pyc
+├── __pycache__/
+│   └── __init__.cpython-311.pyc
+├── .pytest_cache/
+│   ├── CACHEDIR.TAG
+│   ├── README.md
+│   └── .gitignore
+│   ├── v/
+│   │   ├── cache/
+│   │   │   ├── nodeids
+│   │   │   └── stepwise
+├── agents/
+│   ├── __init__.py
+│   └── supervisor_agent.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── supervisor_agent.cpython-311.pyc
 ├── tests/
-├── src/
-│   ├── user_bot/
-│   │   ├── clients/
-│   │   ├── agents/
-│   │   ├── core/
+│   ├── test_greet.py
+│   ├── test_redis_connection.py
+│   ├── __init__.py
+│   └── conftest.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── test_greet.cpython-311-pytest-7.4.4.pyc
+│   │   └── test_redis_connection.cpython-311-pytest-7.4.4.pyc
+├── .ruff_cache/
+│   ├── CACHEDIR.TAG
+│   └── .gitignore
+│   ├── 0.1.13/
+│   │   ├── 4880724097865524303
+│   │   └── 4272074653906961583
+├── utils/
+│   ├── validators.py
+│   ├── config.py
+│   └── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── config.cpython-311.pyc
