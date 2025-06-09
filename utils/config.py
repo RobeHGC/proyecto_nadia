@@ -23,6 +23,9 @@ class Config:
     debug: bool = False
     log_level: str = "INFO"
 
+    # App
+    api_port: int = 8000
+
     @classmethod
     def from_env(cls) -> "Config":
         """Crea configuración desde variables de entorno."""
@@ -33,7 +36,8 @@ class Config:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             debug=os.getenv("DEBUG", "False").lower() == "true",
-            log_level=os.getenv("LOG_LEVEL", "INFO")
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            api_port=int(os.getenv("API_PORT", "8000"))
         )
 
 

@@ -3,11 +3,16 @@
 # userbot.py
 """Punto de entrada principal del bot de Telegram."""
 import asyncio
+import contextlib
+import json
 import logging
+from datetime import datetime
 
+import redis.asyncio as redis
 from telethon import TelegramClient, events
 
 from agents.supervisor_agent import SupervisorAgent
+from cognition.cognitive_controller import CognitiveController
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
@@ -15,61 +20,218 @@ from utils.config import Config
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class UserBot:
     """Cliente principal de Telegram que maneja eventos de mensajes."""
 
     def __init__(self, config: Config):
-        """Inicializa el bot con la configuración dada."""
         self.config = config
-        self.client = TelegramClient(
-            'bot_session',
-            config.api_id,
-            config.api_hash
-        )
 
-        # Inicializar componentes
+        # Telegram
+        self.client = TelegramClient("bot_session", config.api_id, config.api_hash)
+
+        # Componentes internos
         self.memory = UserMemoryManager(config.redis_url)
         self.llm = OpenAIClient(config.openai_api_key, config.openai_model)
         self.supervisor = SupervisorAgent(self.llm, self.memory)
+        self.cognitive_controller = CognitiveController()
 
+        # Redis / WAL
+        self.redis_url = config.redis_url
+        self._redis: redis.Redis | None = None
+        self.message_queue_key = "nadia_message_queue"
+        self.processing_key = "nadia_processing"
+
+    # ────────────────────────────────
+    # Helpers Redis
+    # ────────────────────────────────
+    async def _get_redis(self) -> redis.Redis:
+        if not self._redis:
+            self._redis = await redis.from_url(self.redis_url)
+        return self._redis
+
+    # ────────────────────────────────
+    # Flujo principal
+    # ────────────────────────────────
     async def start(self):
-        """Inicia la conexión con Telegram y configura handlers."""
+        """Arranca el bot y el worker WAL."""
         await self.client.start(phone=self.config.phone_number)
         logger.info("Bot iniciado correctamente")
 
-        # Registrar handler para mensajes privados
+        wal_worker = asyncio.create_task(self._process_wal_queue())
+
         @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
-        async def handle_message(event):
-            await self._handle_message(event)
+        async def _(event):  # noqa: D401,  WPS122
+            await self._enqueue_message(event)
 
-        # Mantener el bot corriendo
-        await self.client.run_until_disconnected()
-
-    async def _handle_message(self, event):
-        """Procesa mensajes entrantes."""
         try:
-            user_id = str(event.sender_id)
-            message = event.text
+            await self.client.run_until_disconnected()
+        finally:
+            wal_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await wal_worker
+            await self.memory.close()
 
-            logger.info(f"Mensaje recibido de {user_id}: {message}")
+    # ────────────────────────────────
+    # Encolado WAL
+    # ────────────────────────────────
+    async def _enqueue_message(self, event):
+        """Añade el mensaje al WAL antes de procesarlo."""
+        try:
+            r = await self._get_redis()
+            message_data = {
+                "user_id": str(event.sender_id),
+                "message": event.text,
+                "chat_id": event.chat_id,
+                "message_id": event.message.id,
+                "timestamp": datetime.now().isoformat(),
+            }
+            await r.lpush(self.message_queue_key, json.dumps(message_data))
+            logger.info("Mensaje encolado en WAL de usuario %s", message_data["user_id"])
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error encolando mensaje en WAL: %s", exc)
+            await self._handle_message_direct(event)
 
-            # Procesar mensaje con el supervisor
-            response = await self.supervisor.process_message(user_id, message)
+    # ────────────────────────────────
+    # Worker WAL
+    # ────────────────────────────────
+    async def _process_wal_queue(self):
+        """Consume la cola WAL de forma continua."""
+        logger.info("Iniciando procesador de cola WAL")
+        r = await self._get_redis()
 
-            # Enviar respuesta
+        try:
+            while True:
+                _, raw = await r.brpop(self.message_queue_key, timeout=1) or (None, None)
+                if not raw:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                data = json.loads(raw)
+                await r.set(
+                    f"{self.processing_key}:{data['user_id']}",
+                    raw,
+                    ex=300,
+                )
+
+                await self._process_message(data)
+                await r.delete(f"{self.processing_key}:{data['user_id']}")
+        except asyncio.CancelledError:
+            logger.info("WAL worker detenido")
+            raise
+        finally:
+            await self.memory.close()
+
+    # ────────────────────────────────
+    # Procesamiento de mensajes
+    # ────────────────────────────────
+    async def _process_message(self, msg: dict):
+        """Procesa un mensaje extraído del WAL."""
+        try:
+            route = self.cognitive_controller.route_message(msg["message"])
+            if route == "fast_path":
+                response = await self._handle_fast_path(msg["message"])
+            else:
+                response = await self.supervisor.process_message(
+                    msg["user_id"], msg["message"]
+                )
+
+            await self.client.send_message(msg["chat_id"], response)
+            logger.info("Respuesta (%s): %.50s…", route, response)
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error procesando mensaje WAL: %s", exc)
+            await self.client.send_message(
+                msg["chat_id"],
+                "Uf, perdona si tardo un poco... de repente siento que todo el "
+                "mundo me está hablando a la vez y mi cabeza va a mil. "
+                "Dame un segundito para poner mis ideas en orden. 😅",
+            )
+
+    # ────────────────────────────────
+    # Fast-path
+    # ────────────────────────────────
+    async def _handle_fast_path(self, message: str) -> str:
+        """Responde a comandos simples."""
+        m = message.lower().strip()
+        fast = {
+            "/ayuda": (
+                "🌟 ¡Hola! Soy Nadia, tu asistente conversacional.\n\n"
+                "Comandos:\n"
+                "• /ayuda - Ver ayuda\n"
+                "• /estado - Ver mi estado\n"
+                "• /version - Ver versión\n\n"
+                "¡Cuéntame en qué puedo ayudarte! 💫"
+            ),
+            "/help": "Same as /ayuda 😊",
+            "/estado": "✨ Estado: OK\n🧠 Memoria: Activa",
+            "/status": "Same as /estado 🎯",
+            "/version": "🤖 Nadia v0.2.0 – Sprint 2",
+            "/start": "¡Hola! 👋 Soy Nadia. ¿En qué puedo ayudarte hoy?",
+            "/stop": "¡Hasta pronto! 👋 Fue un placer conversar contigo.",
+            "/comandos": "Usa /ayuda para ver todos los comandos disponibles 📋",
+        }
+        return fast.get(m, "Comando no reconocido. Usa /ayuda para ver los comandos.")
+
+    # ────────────────────────────────
+    # Fallback directo (sin WAL)
+    # ────────────────────────────────
+    async def _handle_message_direct(self, event):
+        try:
+            response = await self.supervisor.process_message(
+                str(event.sender_id), event.text
+            )
             await event.reply(response)
-            logger.info(f"Respuesta enviada: {response}")
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error procesando mensaje directo: %s", exc)
+            await event.reply(
+                "Uf, perdona si tardo un poco... de repente siento que todo el "
+                "mundo me está hablando a la vez y mi cabeza va a mil. "
+                "Dame un segundito para poner mis ideas en orden. 😅"
+            )
 
-        except Exception as e:
-            logger.error(f"Error procesando mensaje: {e}")
-            await event.reply("Lo siento, ocurrió un error. ¿Podrías repetir?")
+
+# ────────────────────────────────
+# Bootstrap
+# ────────────────────────────────
 async def main():
-    """Función principal."""
-    config = Config.from_env()
-    bot = UserBot(config)
-    await bot.start()
-if __name__ == "__main__":
+    cfg = Config.from_env()
+    await UserBot(cfg).start()
+
+
+if __name__ == "__main__":  # pragma: no cover
     asyncio.run(main())
+
+
+# ==== ./run_api.py ====
+
+#!/usr/bin/env python3
+# run_api.py
+"""Script para ejecutar el servidor API de Nadia."""
+import sys
+from pathlib import Path
+
+# Añadir el directorio raíz al path
+sys.path.insert(0, str(Path(__file__).parent))
+
+if __name__ == "__main__":
+    import uvicorn
+
+    from utils.config import Config
+
+    config = Config.from_env()
+    port = 8000  # Puerto por defecto
+
+    print(f"🚀 Iniciando API Server de Nadia en puerto {port}")
+    print(f"📍 Documentación disponible en: http://localhost:{port}/docs")
+    print(f"🔐 Endpoint GDPR: DELETE http://localhost:{port}/users/{{user_id}}/memory")
+
+    uvicorn.run(
+        "api.server:app",
+        host="0.0.0.0",
+        port=port,
+        reload=config.debug,
+        log_level=config.log_level.lower()
+    )
 
 
 # ==== ./__init__.py ====
@@ -123,11 +285,12 @@ class OpenAIClient:
 
 # ==== ./memory/user_memory.py ====
 
-# memory/user_memory.py
 """Gestor de memoria para almacenar contexto de usuarios."""
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
 
@@ -138,59 +301,100 @@ class UserMemoryManager:
     """Gestiona la memoria y contexto de cada usuario."""
 
     def __init__(self, redis_url: str):
-        """Inicializa el gestor con conexión a Redis."""
-        self.redis_url = redis_url
-        self._redis = None
+        self.redis_url: str = redis_url
+        self._redis: Optional[redis.Redis] = None
 
-    async def _get_redis(self):
-        """Obtiene o crea la conexión a Redis."""
+    # ────────────────────────────────
+    # Conexión Redis
+    # ────────────────────────────────
+    async def _get_redis(self) -> redis.Redis:
+        """Devuelve una conexión Redis reutilizable."""
         if not self._redis:
-            self._redis = await redis.from_url(self.redis_url)
+            # `from_url` devuelve de inmediato; no necesita `await`
+            self._redis = redis.from_url(self.redis_url, decode_responses=True)
         return self._redis
 
+    # ────────────────────────────────
+    # CRUD de contexto
+    # ────────────────────────────────
     async def get_user_context(self, user_id: str) -> Dict[str, Any]:
-        """Obtiene el contexto almacenado de un usuario."""
         try:
             r = await self._get_redis()
             data = await r.get(f"user:{user_id}")
-
-            if data:
-                return json.loads(data)
+            return json.loads(data) if data else {}
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error obteniendo contexto: %s", exc)
             return {}
 
-        except Exception as e:
-            logger.error(f"Error obteniendo contexto: {e}")
-            return {}
-
-    async def update_user_context(
-        self,
-        user_id: str,
-        updates: Dict[str, Any]
-    ) -> None:
-        """Actualiza el contexto de un usuario."""
+    async def update_user_context(self, user_id: str, updates: Dict[str, Any]) -> None:
         try:
             r = await self._get_redis()
-
-            # Obtener contexto actual
             context = await self.get_user_context(user_id)
-
-            # Actualizar con nuevos datos
             context.update(updates)
-
-            # Guardar
             await r.set(
-                f"user:{user_id}",
-                json.dumps(context),
-                ex=86400 * 30  # Expirar en 30 días
+                f"user:{user_id}", json.dumps(context), ex=86400 * 30  # 30 días
             )
-
-        except Exception as e:
-            logger.error(f"Error actualizando contexto: {e}")
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error actualizando contexto: %s", exc)
 
     async def set_name(self, user_id: str, name: str) -> None:
-        """Almacena el nombre del usuario."""
         await self.update_user_context(user_id, {"name": name})
-        logger.info(f"Nombre guardado para usuario {user_id}: {name}")
+        logger.info("Nombre guardado para usuario %s: %s", user_id, name)
+
+    # ────────────────────────────────
+    # GDPR delete
+    # ────────────────────────────────
+    async def delete_all_data_for_user(self, user_id: str) -> bool:
+        """
+        Elimina TODO lo relacionado con un usuario (GDPR).
+        """
+        try:
+            r = await self._get_redis()
+            patterns = [f"user:{user_id}", f"user:{user_id}:*"]
+            deleted = 0
+
+            for pattern in patterns:
+                if "*" in pattern:
+                    async for key in r.scan_iter(match=pattern):
+                        await r.delete(key)
+                        deleted += 1
+                else:
+                    deleted += await r.delete(pattern)
+
+            # Borrar marca de procesamiento del WAL
+            await r.delete(f"nadia_processing:{user_id}")
+
+            logger.info("Eliminadas %s claves para usuario %s", deleted, user_id)
+            return True
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error eliminando datos del usuario %s: %s", user_id, exc)
+            return False
+
+    # ────────────────────────────────
+    # Utilidades
+    # ────────────────────────────────
+    async def get_all_user_ids(self) -> List[str]:
+        try:
+            r = await self._get_redis()
+            ids: List[str] = []
+
+            async for key in r.scan_iter(match="user:*"):
+                ks = key if isinstance(key, str) else key.decode()
+                if ks.count(":") == 1:  # descarta subclaves tipo user:id:extra
+                    ids.append(ks.split(":")[1])
+            return ids
+        except Exception as exc:  # pragma: no cover
+            logger.error("Error obteniendo lista de usuarios: %s", exc)
+            return []
+
+    # ────────────────────────────────
+    # Cierre explícito
+    # ────────────────────────────────
+    async def close(self) -> None:
+        """Cierra la conexión Redis si está abierta."""
+        if self._redis:
+            await self._redis.aclose()
+            self._redis = None
 
 
 # ==== ./memory/__init__.py ====
@@ -286,6 +490,278 @@ class SupervisorAgent:
                 break
 
 
+# ==== ./tests/test_gdpr_api.py ====
+
+# tests/test_gdpr_api.py
+"""Tests para el endpoint GDPR de borrado de datos."""
+import pytest
+from fastapi.testclient import TestClient
+
+from api.server import app
+from memory.user_memory import UserMemoryManager
+from utils.config import Config
+
+
+class TestGDPRAPI:
+    """Tests para verificar el cumplimiento GDPR."""
+
+    @pytest.fixture
+    def client(self):
+        """Cliente de test para la API."""
+        return TestClient(app)
+
+    @pytest.fixture
+    async def memory_manager(self):
+        """Gestor de memoria para tests."""
+        config = Config.from_env()
+        return UserMemoryManager(config.redis_url)
+
+    @pytest.mark.asyncio
+    async def test_delete_existing_user(self, client, memory_manager):
+        """Verifica el borrado exitoso de un usuario existente."""
+        user_id = "test_user_123"
+
+        # Crear datos de usuario
+        await memory_manager.update_user_context(
+            user_id,
+            {"name": "Test User", "age": 25}
+        )
+
+        # Verificar que el usuario existe
+        context = await memory_manager.get_user_context(user_id)
+        assert context["name"] == "Test User"
+
+        # Llamar al endpoint de borrado
+        response = client.delete(f"/users/{user_id}/memory")
+        assert response.status_code == 204
+
+        # Verificar que los datos fueron eliminados
+        context = await memory_manager.get_user_context(user_id)
+        assert context == {}
+
+    def test_delete_nonexistent_user(self, client):
+        """Verifica el manejo de usuarios no existentes."""
+        response = client.delete("/users/nonexistent_user/memory")
+        assert response.status_code == 404
+        assert "no encontrado" in response.json()["detail"]
+
+    def test_health_endpoint(self, client):
+        """Verifica el endpoint de salud."""
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json()["status"] in ["healthy", "unhealthy"]
+        assert "services" in response.json()
+
+    def test_root_endpoint(self, client):
+        """Verifica el endpoint raíz."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "Nadia Bot API" in response.json()["message"]
+        assert "endpoints" in response.json()
+
+    @pytest.mark.asyncio
+    async def test_get_user_memory(self, client, memory_manager):
+        """Verifica la lectura de memoria de usuario."""
+        user_id = "test_read_user"
+        test_data = {"name": "Reader", "preferences": ["chat", "music"]}
+
+        # Crear datos
+        await memory_manager.update_user_context(user_id, test_data)
+
+        # Leer mediante API
+        response = client.get(f"/users/{user_id}/memory")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["user_id"] == user_id
+        assert data["context"]["name"] == "Reader"
+        assert "preferences" in data["context"]
+
+    def test_get_nonexistent_user_memory(self, client):
+        """Verifica el manejo de lectura de usuarios no existentes."""
+        response = client.get("/users/ghost_user/memory")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_user_with_multiple_keys(self, client, memory_manager):
+        """Verifica el borrado completo de usuarios con múltiples claves."""
+        user_id = "complex_user"
+
+        # Crear múltiples entradas para el usuario
+        await memory_manager.update_user_context(
+            user_id,
+            {"name": "Complex", "data": "main"}
+        )
+
+        # Simular claves adicionales (para futuras extensiones)
+        r = await memory_manager._get_redis()
+        await r.set(f"user:{user_id}:preferences", '{"theme": "dark"}')
+        await r.set(f"user:{user_id}:history", '[]')
+
+        # Verificar que existen múltiples claves
+        keys = []
+        async for key in r.scan_iter(match=f"user:{user_id}*"):
+            keys.append(key)
+        assert len(keys) >= 1  # Al menos la clave principal
+
+        # Borrar mediante API
+        response = client.delete(f"/users/{user_id}/memory")
+        assert response.status_code == 204
+
+        # Verificar que todas las claves fueron eliminadas
+        keys_after = []
+        async for key in r.scan_iter(match=f"user:{user_id}*"):
+            keys_after.append(key)
+        assert len(keys_after) == 0
+
+
+# ==== ./tests/test_wal_integration.py ====
+
+# tests/test_wal_integration.py
+"""Tests de integración para el Write-Ahead Log."""
+import asyncio
+import json
+
+import pytest
+import redis.asyncio as redis
+
+from utils.config import Config
+
+
+@pytest.mark.asyncio
+class TestWALIntegration:
+    """Tests para verificar la robustez del WAL."""
+
+    @pytest.fixture
+    async def redis_client(self):
+        """Cliente Redis para tests."""
+        config = Config.from_env()
+        r = await redis.from_url(config.redis_url)
+        yield r
+        # Limpiar después del test
+        await r.flushdb()
+        await r.aclose()
+
+    async def test_message_enqueue(self, redis_client):
+        """Verifica que los mensajes se encolen correctamente."""
+        queue_key = "nadia_message_queue"
+
+        # Simular encolado de mensaje
+        message_data = {
+            'user_id': '12345',
+            'message': 'Hola test',
+            'chat_id': -1001234567890,
+            'message_id': 42,
+            'timestamp': '2024-01-01T12:00:00'
+        }
+
+        await redis_client.lpush(queue_key, json.dumps(message_data))
+
+        # Verificar que el mensaje está en la cola
+        queue_length = await redis_client.llen(queue_key)
+        assert queue_length == 1
+
+        # Recuperar y verificar el mensaje
+        result = await redis_client.brpop(queue_key, timeout=1)
+        assert result is not None
+
+        _, message_json = result
+        recovered_data = json.loads(message_json)
+        assert recovered_data == message_data
+
+    async def test_multiple_messages_order(self, redis_client):
+        """Verifica que múltiples mensajes mantengan el orden FIFO."""
+        queue_key = "nadia_message_queue"
+
+        # Encolar varios mensajes
+        messages = []
+        for i in range(5):
+            msg = {
+                'user_id': f'user_{i}',
+                'message': f'Mensaje {i}',
+                'chat_id': -1001234567890,
+                'message_id': i,
+                'timestamp': f'2024-01-01T12:00:0{i}'
+            }
+            messages.append(msg)
+            await redis_client.lpush(queue_key, json.dumps(msg))
+
+        # Verificar que se recuperan en orden FIFO
+        for i in range(5):
+            result = await redis_client.brpop(queue_key, timeout=1)
+            assert result is not None
+
+            _, message_json = result
+            recovered_data = json.loads(message_json)
+            assert recovered_data['message'] == f'Mensaje {i}'
+
+    async def test_processing_marker(self, redis_client):
+        """Verifica el marcador de procesamiento."""
+        processing_key = "nadia_processing:user123"
+
+        # Marcar como en procesamiento
+        message_data = {'user_id': 'user123', 'message': 'Test'}
+        await redis_client.set(
+            processing_key,
+            json.dumps(message_data),
+            ex=300  # 5 minutos
+        )
+
+        # Verificar que existe
+        exists = await redis_client.exists(processing_key)
+        assert exists == 1
+
+        # Verificar TTL
+        ttl = await redis_client.ttl(processing_key)
+        assert 290 < ttl <= 300  # Aproximadamente 5 minutos
+
+        # Limpiar
+        await redis_client.delete(processing_key)
+        exists = await redis_client.exists(processing_key)
+        assert exists == 0
+
+    async def test_concurrent_processing(self, redis_client):
+        """Simula procesamiento concurrente de mensajes."""
+        queue_key = "nadia_message_queue"
+        processed_messages = []
+
+        async def process_worker(worker_id: int):
+            """Worker que procesa mensajes."""
+            while True:
+                result = await redis_client.brpop(queue_key, timeout=1)
+                if result is None:
+                    break
+
+                _, message_json = result
+                data = json.loads(message_json)
+                processed_messages.append({
+                    'worker_id': worker_id,
+                    'message': data['message']
+                })
+                await asyncio.sleep(0.1)  # Simular procesamiento
+
+        # Encolar mensajes
+        for i in range(10):
+            msg = {'message': f'Msg-{i}', 'user_id': f'user_{i}'}
+            await redis_client.lpush(queue_key, json.dumps(msg))
+
+        # Iniciar workers concurrentes
+        workers = [
+            asyncio.create_task(process_worker(i))
+            for i in range(3)
+        ]
+
+        # Esperar a que terminen
+        await asyncio.gather(*workers)
+
+        # Verificar que todos los mensajes fueron procesados
+        assert len(processed_messages) == 10
+
+        # Verificar que no hay mensajes duplicados
+        processed_texts = [m['message'] for m in processed_messages]
+        assert len(set(processed_texts)) == 10
+
+
 # ==== ./tests/test_greet.py ====
 
 # tests/test_greet.py
@@ -319,7 +795,7 @@ async def test_greeting_remembers_name(supervisor, mock_memory):
     message = "¿Cómo estás?"
 
     response = await supervisor.process_message(user_id, message)
-
+    assert "Ana" in response
     # Verificar que se usó el contexto
     mock_memory.get_user_context.assert_called_once_with(user_id)
     # El LLM debería haber recibido el nombre en el prompt
@@ -371,6 +847,8 @@ if __name__ == "__main__":
 
 # tests/conftest.py
 """Configuración de fixtures para pytest."""
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -378,7 +856,11 @@ import pytest
 from agents.supervisor_agent import SupervisorAgent
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
+from utils.config import Config
 
+# Asegura que el paquete raíz esté en PYTHONPATH
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 
 @pytest.fixture
 def mock_llm():
@@ -402,6 +884,242 @@ def mock_memory():
 def supervisor(mock_llm, mock_memory):
     """Fixture del supervisor con mocks."""
     return SupervisorAgent(mock_llm, mock_memory)
+
+@pytest.fixture
+async def memory_manager():
+    """
+    Devuelve un UserMemoryManager y garantiza que la
+    conexión Redis se cierre al finalizar la prueba.
+    """
+    cfg = Config.from_env()
+    mgr = UserMemoryManager(cfg.redis_url)
+    try:
+        yield mgr
+    finally:
+        await mgr.close()
+
+
+# ==== ./tests/test_cognitive_controller.py ====
+
+# tests/test_cognitive_controller.py
+"""Tests para el Controlador Cognitivo."""
+import pytest
+
+from cognition.cognitive_controller import CognitiveController
+
+
+class TestCognitiveController:
+    """Tests para la lógica de enrutamiento del controlador."""
+
+    @pytest.fixture
+    def controller(self):
+        """Crea una instancia del controlador para tests."""
+        return CognitiveController()
+
+    def test_fast_path_commands(self, controller):
+        """Verifica que los comandos se enruten a fast_path."""
+        fast_commands = [
+            "/ayuda",
+            "/AYUDA",  # Mayúsculas
+            "/help",
+            "/start",
+            "/stop",
+            "/estado",
+            "/status",
+            "/version",
+            "/comandos"
+        ]
+
+        for command in fast_commands:
+            route = controller.route_message(command)
+            assert route == 'fast_path', f"Comando {command} debería ir por fast_path"
+
+    def test_slow_path_conversations(self, controller):
+        """Verifica que las conversaciones normales vayan por slow_path."""
+        conversations = [
+            "Hola, ¿cómo estás?",
+            "Me llamo Juan",
+            "¿Qué puedes hacer?",
+            "Cuéntame un chiste",
+            "¿Cuál es el sentido de la vida?",
+            "/comando_inexistente",
+            "ayuda",  # Sin slash
+            ""  # Mensaje vacío
+        ]
+
+        for message in conversations:
+            route = controller.route_message(message)
+            assert route == 'slow_path', f"Mensaje '{message}' debería ir por slow_path"
+
+    def test_whitespace_handling(self, controller):
+        """Verifica el manejo correcto de espacios en blanco."""
+        # Comandos con espacios
+        assert controller.route_message("  /ayuda  ") == 'fast_path'
+        assert controller.route_message("/ayuda ") == 'fast_path'
+        assert controller.route_message(" /ayuda") == 'fast_path'
+
+        # Comandos con texto adicional van por slow_path
+        assert controller.route_message("/ayuda algo más") == 'slow_path'
+        assert controller.route_message("/help me please") == 'slow_path'
+
+    def test_add_custom_pattern(self, controller):
+        """Verifica que se puedan añadir nuevos patrones."""
+        # Añadir patrón personalizado
+        controller.add_fast_path_pattern(r'^/custom$')
+
+        # Verificar que funciona
+        assert controller.route_message("/custom") == 'fast_path'
+        assert controller.route_message("/custom extra") == 'slow_path'
+
+    def test_case_insensitive(self, controller):
+        """Verifica que los comandos sean case-insensitive."""
+        variations = ["/AYUDA", "/Ayuda", "/aYuDa", "/ayuda"]
+
+        for variant in variations:
+            assert controller.route_message(variant) == 'fast_path'
+
+
+# ==== ./api/server.py ====
+
+# api/server.py
+"""Servidor API para gestión del bot Nadia y cumplimiento GDPR."""
+import logging
+from contextlib import asynccontextmanager
+
+import redis.asyncio as redis
+from fastapi import FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+
+from memory.user_memory import UserMemoryManager
+from utils.config import Config
+
+# ────────────────────────────────
+# Configuración y dependencias
+# ────────────────────────────────
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+cfg = Config.from_env()
+memory_manager = UserMemoryManager(cfg.redis_url)
+
+# ────────────────────────────────
+# Ciclo de vida FastAPI
+# ────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Abre la pool Redis al arrancar y la cierra al apagar."""
+    logger.info("API Server iniciando…")
+    # Pre-load para reutilizar la pool en los handlers
+    app.state.redis = await memory_manager._get_redis()
+
+    try:
+        yield
+    finally:
+        logger.info("API Server cerrando…")
+        await memory_manager.close()
+
+# ────────────────────────────────
+# Crear aplicación FastAPI
+# ────────────────────────────────
+app = FastAPI(
+    title="Nadia Bot API",
+    description="API para gestión del bot Nadia y cumplimiento GDPR",
+    version="0.2.0",
+    lifespan=lifespan,
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],             # ← restringe en producción
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ────────────────────────────────
+# Endpoints
+# ────────────────────────────────
+@app.get("/", tags=["meta"])
+async def root() -> dict:
+    """Endpoint raíz de bienvenida."""
+    return {
+        "message": "Nadia Bot API",
+        "version": app.version,
+        "endpoints": {
+            "health": "/health",
+            "delete_user": "DELETE /users/{user_id}/memory",
+        },
+    }
+
+
+@app.get("/health", tags=["meta"])
+async def health_check() -> dict:
+    """Verifica el estado de salud del servicio."""
+    try:
+        r = await redis.from_url(cfg.redis_url)
+        await r.ping()
+        await r.aclose()
+        return {"status": "healthy", "services": {"api": "ok", "redis": "ok"}}
+    except Exception as exc:  # pragma: no cover
+        logger.error("Health check failed: %s", exc)
+        return {
+            "status": "unhealthy",
+            "services": {"api": "ok", "redis": "error"},
+            "error": str(exc),
+        }
+
+
+@app.delete(
+    "/users/{user_id}/memory",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["gdpr"],
+)
+async def delete_user_data(user_id: str) -> Response:
+    """
+    Elimina todos los datos de un usuario (GDPR – derecho al olvido).
+    """
+    logger.info("Solicitud GDPR para usuario %s", user_id)
+
+    context = await memory_manager.get_user_context(user_id)
+    if not context:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if not await memory_manager.delete_all_data_for_user(user_id):
+        raise HTTPException(
+            status_code=500, detail="Error al eliminar los datos del usuario"
+        )
+
+    logger.info("Datos del usuario %s eliminados exitosamente", user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/users/{user_id}/memory", tags=["gdpr"])
+async def get_user_memory(user_id: str) -> dict:
+    """Devuelve la memoria/contexto almacenado de un usuario."""
+    context = await memory_manager.get_user_context(user_id)
+    if not context:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"user_id": user_id, "context": context}
+
+
+# ────────────────────────────────
+# Ejecución standalone
+# ────────────────────────────────
+if __name__ == "__main__":  # pragma: no cover
+    import uvicorn
+
+    uvicorn.run(
+        "api.server:app",
+        host="0.0.0.0",
+        port=int(getattr(cfg, "api_port", 8000)),
+        reload=cfg.debug,
+        log_level=cfg.log_level.lower(),
+    )
+
+
+# ==== ./api/__init__.py ====
+
 
 
 # ==== ./utils/validators.py ====
@@ -427,17 +1145,16 @@ class Config:
     api_id: int
     api_hash: str
     phone_number: str
-
-    # OpenAI
     openai_api_key: str
-    openai_model: str = "gpt-3.5-turbo"
-
-    # Redis
     redis_url: str
 
-    # App
+    # opcionales / con default
+    openai_model: str = "gpt-3.5-turbo"
     debug: bool = False
     log_level: str = "INFO"
+
+    # App
+    api_port: int = 8000
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -449,7 +1166,8 @@ class Config:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             debug=os.getenv("DEBUG", "False").lower() == "true",
-            log_level=os.getenv("LOG_LEVEL", "INFO")
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            api_port=int(os.getenv("API_PORT", "8000"))
         )
 
 
@@ -457,5 +1175,93 @@ class Config:
 
 # ==== ./utils/__init__.py ====
 
+
+
+# ==== ./cognition/cognitive_controller.py ====
+
+# cognition/cognitive_controller.py
+"""Controlador cognitivo que actúa como router entre vías de procesamiento."""
+import logging
+import re
+from typing import Literal
+
+logger = logging.getLogger(__name__)
+
+
+class CognitiveController:
+    """
+    Controlador que decide si un mensaje debe ir por la vía rápida o lenta.
+
+    El Controlador Cognitivo actúa como el "neocórtex" del sistema, tomando
+    decisiones rápidas sobre cómo procesar cada mensaje entrante.
+    """
+
+    def __init__(self):
+        """Inicializa el controlador con patrones de comandos rápidos."""
+        # Patrones de comandos que siempre van por vía rápida
+        self.fast_path_patterns = [
+            r'^/ayuda$',
+            r'^/help$',
+            r'^/start$',
+            r'^/stop$',
+            r'^/estado$',
+            r'^/status$',
+            r'^/version$',
+            r'^/comandos$',
+        ]
+
+        # Compilar regex para mejor rendimiento
+        self.compiled_patterns = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in self.fast_path_patterns
+        ]
+
+        logger.info("CognitiveController inicializado con patrones de vía rápida")
+
+    def route_message(self, message: str) -> Literal['fast_path', 'slow_path']:
+        """
+        Determina la ruta de procesamiento para un mensaje.
+
+        Args:
+            message: El mensaje del usuario a analizar
+
+        Returns:
+            'fast_path' para comandos simples
+            'slow_path' para conversaciones complejas
+        """
+        # Sanitizar mensaje
+        message = message.strip()
+
+        # Verificar si es un comando de vía rápida
+        for pattern in self.compiled_patterns:
+            if pattern.match(message):
+                logger.info(f"Mensaje '{message}' enrutado a fast_path")
+                return 'fast_path'
+
+        # TODO: En el futuro, aquí irá la lógica de embeddings para:
+        # - Detectar preguntas frecuentes
+        # - Analizar complejidad semántica
+        # - Evaluar carga emocional
+        # - Determinar necesidad de contexto histórico
+
+        # Por ahora, todo lo demás va por vía lenta (personalizada)
+        logger.info(f"Mensaje '{message[:50]}...' enrutado a slow_path")
+        return 'slow_path'
+
+    def add_fast_path_pattern(self, pattern: str):
+        """
+        Añade un nuevo patrón a la lista de vía rápida.
+
+        Args:
+            pattern: Expresión regular para comandos rápidos
+        """
+        self.fast_path_patterns.append(pattern)
+        self.compiled_patterns.append(re.compile(pattern, re.IGNORECASE))
+        logger.info(f"Nuevo patrón añadido a fast_path: {pattern}")
+
+
+# ==== ./cognition/__init__.py ====
+
+"""Módulo de cognición - Sistema de control y decisión del bot."""
 
 
