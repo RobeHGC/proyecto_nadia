@@ -35,14 +35,14 @@ class SupervisorAgent:
         return response
 
     def _build_prompt(self, message: str, context: Dict[str, Any]) -> list:
-        """Construye el prompt para el LLM."""
+        """Builds the prompt for the LLM."""
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Eres una asistente conversacional amigable y empática. "
-                    "Tu objetivo es mantener conversaciones naturales y agradables. "
-                    "Recuerda los detalles que los usuarios compartan contigo."
+                    "You are a friendly and empathetic conversational assistant. "
+                    "Your goal is to maintain natural and pleasant conversations. "
+                    "Remember the details that users share with you."
                 )
             }
         ]
@@ -51,7 +51,7 @@ class SupervisorAgent:
         if context.get("name"):
             messages.append({
                 "role": "system",
-                "content": f"El usuario se llama {context['name']}."
+                "content": f"The user's name is {context['name']}."
             })
 
         # Añadir mensaje del usuario
@@ -61,15 +61,18 @@ class SupervisorAgent:
         })
 
         return messages
-
+    #patrones de extracción de nombre:
     async def _extract_and_store_info(self, user_id: str, message: str, response: str):
         """Extrae información del mensaje y la almacena."""
         # Buscar patrones de presentación
         name_patterns = [
-            r"me llamo (\w+)",
-            r"mi nombre es (\w+)",
-            r"soy (\w+)",
-            r"puedes llamarme (\w+)"
+            r"my name is (\w+)",
+            r"i'm (\w+)",
+            r"i am (\w+)",
+            r"call me (\w+)",
+            r"this is (\w+)",
+            r"(\w+) here",  # "John here"
+            r"it's (\w+)",  # "It's John"
         ]
 
         for pattern in name_patterns:
@@ -77,5 +80,5 @@ class SupervisorAgent:
             if match:
                 name = match.group(1).capitalize()
                 await self.memory.set_name(user_id, name)
-                logger.info(f"Nombre extraído y almacenado: {name}")
+                logger.info(f"Name extracted and stored: {name}")
                 break
