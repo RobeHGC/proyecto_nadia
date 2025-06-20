@@ -59,11 +59,13 @@ class SupervisorAgent:
         # Paso 1: LLM-1 - Generación creativa
         llm1_response = await self._generate_creative_response(message, context)
 
-        # Paso 2: Constitution - Análisis de riesgos (no bloquea)
-        constitution_analysis = self.constitution.analyze(llm1_response)
+        # Paso 2: LLM-2 - Refinamiento y formato de burbujas
+        llm2_bubbles = await self._refine_and_format_bubbles(llm1_response, message, context)
 
-        # Paso 3: LLM-2 - Refinamiento y formato de burbujas
-        llm2_bubbles = await self._refine_and_format_bubbles(llm1_response, message, context, constitution_analysis)
+        # Paso 3: Constitution - Análisis de riesgos (no bloquea)
+        # Ahora evalúa el mensaje refinado final para casos reales
+        final_message = " ".join(llm2_bubbles)
+        constitution_analysis = self.constitution.analyze(final_message)
 
         # Extraer información relevante (ej: nombre) de forma asíncrona
         await self._extract_and_store_info(user_id, message, llm1_response)
@@ -129,9 +131,9 @@ class SupervisorAgent:
         return response
 
     async def _refine_and_format_bubbles(self, raw_response: str, original_message: str,
-                                       context: Dict[str, Any], analysis: ConstitutionAnalysis) -> List[str]:
+                                       context: Dict[str, Any]) -> List[str]:
         """LLM-2: Refina respuesta y la formatea en burbujas."""
-        prompt = self._build_refinement_prompt(raw_response, original_message, context, analysis)
+        prompt = self._build_refinement_prompt(raw_response, original_message, context)
         # Usar temperature más baja para refinamiento
         refined_response = await self.llm.generate_response(prompt, temperature=0.5)
 
@@ -172,7 +174,7 @@ class SupervisorAgent:
         return messages
 
     def _build_refinement_prompt(self, raw_response: str, original_message: str,
-                               context: Dict[str, Any], analysis: ConstitutionAnalysis) -> list:
+                               context: Dict[str, Any]) -> list:
         """Builds prompt for LLM-2 (refinement)."""
         system_msg = (
             "You are refining Nadia's conversational style. "
@@ -185,11 +187,6 @@ class SupervisorAgent:
             "Use [GLOBO] to separate different message bubbles that should be sent separately.\n"
             "Each bubble should be conversational and not too long.\n"
         )
-
-        # Añadir contexto de riesgo si existe
-        if analysis.violations:
-            system_msg += f"\nNOTE: The original response had some concerns: {', '.join(analysis.violations[:3])}. "
-            system_msg += "Make sure to address these appropriately while maintaining a helpful tone."
 
         messages = [
             {"role": "system", "content": system_msg},

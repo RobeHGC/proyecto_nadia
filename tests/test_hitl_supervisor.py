@@ -95,27 +95,28 @@ class TestSupervisorAgentHITL:
         assert bubbles[0] == "Single response without markers"
 
     async def test_constitution_analysis_integration(self):
-        """Test that constitution analysis is included in ReviewItem."""
+        """Test that constitution analysis is performed on final refined message."""
         self.mock_memory.get_user_context.return_value = {}
         self.mock_llm.generate_response.side_effect = [
-            "I love you so much!",  # Risky response
-            "I love you! [GLOBO] Have a great day!"
+            "Hello there!",  # Safe initial response
+            "I love you! [GLOBO] Have a great day!"  # Risky refined response
         ]
 
         result = await self.supervisor.process_message("123", "Test")
 
         analysis = result.ai_suggestion.constitution_analysis
         assert analysis is not None
-        assert analysis.risk_score > 0.0
+        assert analysis.risk_score > 0.0  # Should detect risk in refined message
         assert len(analysis.violations) > 0
+        assert "love" in str(analysis.violations).lower()  # Should detect "I love you"
 
     async def test_priority_calculation(self):
         """Test priority calculation logic."""
-        # Test with risky content
+        # Test with risky content in refined message
         self.mock_memory.get_user_context.return_value = {}
         self.mock_llm.generate_response.side_effect = [
-            "I love you!",  # Risky
-            "Refined response"
+            "Hello!",  # Safe initial
+            "I love you! [GLOBO] You're so special!"  # Risky refined
         ]
 
         risky_result = await self.supervisor.process_message("123", "Test")
@@ -123,7 +124,7 @@ class TestSupervisorAgentHITL:
         # Test with safe content
         self.mock_llm.generate_response.side_effect = [
             "Hello there!",  # Safe
-            "Hello there!"
+            "Hello there! [GLOBO] How can I help?"  # Safe refined
         ]
 
         safe_result = await self.supervisor.process_message("123", "Test")
@@ -192,17 +193,17 @@ class TestSupervisorAgentHITL:
         creative_call = self.mock_llm.generate_response.call_args_list[0]
         messages = creative_call[0][0]  # First positional argument
 
-        # Should contain system message with NADIA persona
+        # Should contain system message with Nadia persona
         system_msg = next(msg for msg in messages if msg["role"] == "system")
-        assert "NADIA" in system_msg["content"]
-        assert "creative" in system_msg["content"].lower()
+        assert "Nadia" in system_msg["content"]
+        assert "friendly" in system_msg["content"].lower()
 
         # Should contain user name context
         name_msg = next((msg for msg in messages if "Alice" in msg.get("content", "")), None)
         assert name_msg is not None
 
     async def test_refinement_prompt_building(self):
-        """Test that refinement prompts include constitution feedback."""
+        """Test that refinement prompts are built correctly."""
         self.mock_memory.get_user_context.return_value = {}
         self.mock_llm.generate_response.side_effect = [
             "I love you!",  # Risky response
@@ -217,5 +218,5 @@ class TestSupervisorAgentHITL:
 
         # Should contain system message about refinement
         system_msg = next(msg for msg in messages if msg["role"] == "system")
-        assert "refinement" in system_msg["content"].lower()
+        assert "refining" in system_msg["content"].lower()
         assert "[GLOBO]" in system_msg["content"]
