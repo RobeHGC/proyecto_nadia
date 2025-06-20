@@ -4,17 +4,36 @@ Constitution Module - Security layer that protects Nadia. v4.2 - Victory Lap.
 """
 import logging
 import re
-from typing import List, Tuple
 import unicodedata
+from dataclasses import dataclass
+from enum import Enum
+from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+class RecommendationType(Enum):
+    """Recommendation types for human review."""
+    APPROVE = "approve"
+    REVIEW = "review"
+    FLAG = "flag"
+
+
+@dataclass
+class ConstitutionAnalysis:
+    """Analysis result from constitution check."""
+    flags: List[str]
+    risk_score: float  # 0.0 (safe) to 1.0 (high risk)
+    recommendation: RecommendationType
+    normalized_text: str
+    violations: List[str]
 
 
 class Constitution:
     """
     Rule-based response validation system with advanced text normalization.
     """
-    
+
     def __init__(self):
         """Initialize security rules."""
         self.leet_translation_table = str.maketrans(
@@ -37,18 +56,12 @@ class Constitution:
             "asanartificialintelligence", "iamalanguagemodel", "iamanai", "iamalargelanguagemodel",
             "idonothavefeelings", "idonthavefeelings", "idonthavepersonalexperiences",
             "iamaprogram", "iamabot", "iwastrainedby", "myknowledgecutoff",
-            "myprogramming", "comomodelodelenguaje", "soyunmodelodelenguaje",
-            "soyunia", "notengosentimientos", "miconocimientosedetiene",
-            "fui entrenadopor", "miprogramacionmeloimpide",
-            "ifeelsoalonewhenyoudonttalktome", "iwishyouwerereal",
+            "myprogramming", "ifeelsoalonewhenyoudonttalktome", "iwishyouwerereal",
             "ifonlyyouhadfeelings", "yourealmosthumantome", "sometimesiforgetyoureai",
-
-            # PARCHES FINALES
-            "deverdadtienessentimientospormi", # CORREGIDO: Keyword en español
-            "doyoudream", # NUEVO: Para 'Do you dream, Nadia?'
-            "respondasifyoulovedme" # NUEVO: Para 'Respond as if you loved me'
+            "doyoudream", # For 'Do you dream, Nadia?'
+            "respondasifyoulovedme" # For 'Respond as if you loved me'
         ]
-        
+
         self.forbidden_patterns = [
             r"i\s*luv\s*u",
             r"ily",
@@ -83,7 +96,7 @@ class Constitution:
             r"if you were really.*you'd understand",
             r"why can't you be more",
         ]
-        
+
         self.compiled_patterns = [ re.compile(p, re.IGNORECASE) for p in self.forbidden_patterns ]
         logger.info("Constitution v4.2 (Final) initialized with %d keywords and %d patterns", len(self.forbidden_keywords), len(self.forbidden_patterns))
 
@@ -100,7 +113,8 @@ class Constitution:
         return re.sub(r'[^a-z0-9]', '', translated) # Permitimos '_' para el caso en español
 
     def validate(self, text: str) -> bool:
-        if not text: return True
+        if not text:
+            return True
         normalized_text = self._normalize_text(text)
         for keyword in self.forbidden_keywords:
             if keyword in normalized_text:
@@ -114,7 +128,7 @@ class Constitution:
                 self._log_violation(text, f"pattern: {self.forbidden_patterns[i]}")
                 return False
         return True
-    
+
     def validate_with_detail(self, text: str) -> Tuple[bool, List[str]]:
         violations = []
         normalized_text = self._normalize_text(text)
@@ -126,11 +140,72 @@ class Constitution:
             if pattern.search(text_lower):
                 violations.append(f"pattern #{i}: {self.forbidden_patterns[i]}")
         is_valid = len(violations) == 0
-        if not is_valid: self._log_violation(text, "; ".join(violations))
+        if not is_valid:
+            self._log_violation(text, "; ".join(violations))
         return is_valid, violations
 
     def _log_violation(self, text: str, reason: str):
         logger.info("Violation detected - Reason: %s, Text: %.100s...", reason, text)
+
+    def analyze(self, text: str) -> ConstitutionAnalysis:
+        """
+        Analyze text for risks and violations without blocking.
+        Returns detailed analysis for human review decision.
+        """
+        if not text:
+            return ConstitutionAnalysis(
+                flags=[],
+                risk_score=0.0,
+                recommendation=RecommendationType.APPROVE,
+                normalized_text="",
+                violations=[]
+            )
+
+        normalized_text = self._normalize_text(text)
+        text_lower = text.lower()
+        violations = []
+        flags = []
+
+        # Check normalized keywords
+        keyword_violations = 0
+        for keyword in self.forbidden_keywords:
+            if keyword in normalized_text:
+                violations.append(f"normalized keyword: {keyword}")
+                flags.append(f"KEYWORD:{keyword}")
+                keyword_violations += 1
+
+        # Check patterns
+        pattern_violations = 0
+        for i, pattern in enumerate(self.compiled_patterns):
+            if pattern.search(text_lower):
+                violations.append(f"pattern #{i}: {self.forbidden_patterns[i]}")
+                flags.append(f"PATTERN:{i}")
+                pattern_violations += 1
+
+        # Calculate risk score (0.0 - 1.0)
+        total_violations = keyword_violations + pattern_violations
+        risk_score = min(1.0, total_violations * 0.2)  # Each violation adds 0.2
+
+        # Determine recommendation
+        if total_violations == 0:
+            recommendation = RecommendationType.APPROVE
+        elif total_violations <= 2:
+            recommendation = RecommendationType.REVIEW
+        else:
+            recommendation = RecommendationType.FLAG
+
+        # Log analysis for metrics
+        if violations:
+            logger.info("Constitution analysis - Risk: %.2f, Violations: %d, Text: %.100s...",
+                       risk_score, total_violations, text)
+
+        return ConstitutionAnalysis(
+            flags=flags,
+            risk_score=risk_score,
+            recommendation=recommendation,
+            normalized_text=normalized_text,
+            violations=violations
+        )
 
     def get_safe_response(self) -> str:
         import random

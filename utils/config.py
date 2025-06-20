@@ -18,6 +18,9 @@ class Config:
     openai_api_key: str
     redis_url: str
 
+    # Database
+    database_url: str
+
     # opcionales / con default
     openai_model: str = "gpt-3.5-turbo"
     debug: bool = False
@@ -35,6 +38,7 @@ class Config:
             phone_number=os.getenv("PHONE_NUMBER", ""),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            database_url=os.getenv("DATABASE_URL", "postgresql://localhost/nadia_hitl"),
             debug=os.getenv("DEBUG", "False").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             api_port=int(os.getenv("API_PORT", "8000"))

@@ -9,9 +9,10 @@ from datetime import datetime
 import redis.asyncio as redis
 from telethon import TelegramClient, events
 
-from agents.supervisor_agent import SupervisorAgent
+from agents.supervisor_agent import ReviewItem, SupervisorAgent
 from cognition.cognitive_controller import CognitiveController
 from cognition.constitution import Constitution  # NUEVO: Import Constitution
+from database.models import DatabaseManager  # NUEVO: Import DatabaseManager
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
@@ -35,12 +36,17 @@ class UserBot:
         self.supervisor = SupervisorAgent(self.llm, self.memory)
         self.cognitive_controller = CognitiveController()
         self.constitution = Constitution()  # NUEVO: Initialize Constitution
+        self.db_manager = DatabaseManager(config.database_url)  # NUEVO: Initialize DatabaseManager
 
         # Redis / WAL
         self.redis_url = config.redis_url
         self._redis: redis.Redis | None = None
         self.message_queue_key = "nadia_message_queue"
         self.processing_key = "nadia_processing"
+
+        # HITL Review Queue
+        self.review_queue_key = "nadia_review_queue"  # Sorted set for priority
+        self.review_items_key = "nadia_review_items"  # Hash for ReviewItem data
 
     # ────────────────────────────────
     # Redis Helpers
@@ -56,6 +62,7 @@ class UserBot:
     async def start(self):
         """Starts the bot and WAL worker."""
         await self.client.start(phone=self.config.phone_number)
+        await self.db_manager.initialize()  # NUEVO: Initialize database
         logger.info("Bot started successfully")
 
         wal_worker = asyncio.create_task(self._process_wal_queue())
@@ -71,6 +78,7 @@ class UserBot:
             with contextlib.suppress(asyncio.CancelledError):
                 await wal_worker
             await self.memory.close()
+            await self.db_manager.close()  # NUEVO: Close database
 
     # ────────────────────────────────
     # WAL Enqueue
@@ -123,48 +131,118 @@ class UserBot:
             await self.memory.close()
 
     # ────────────────────────────────
-    # Message Processing with Constitution
+    # Message Processing - HITL Mode
     # ────────────────────────────────
     async def _process_message(self, msg: dict):
-        """Processes a message from the WAL."""
+        """Processes a message from the WAL - HITL version."""
         try:
             route = self.cognitive_controller.route_message(msg["message"])
 
             if route == "fast_path":
+                # Fast path commands still get sent directly
                 response = await self._handle_fast_path(msg["message"])
+                await self.client.send_message(msg["chat_id"], response)
+                logger.info("Fast path response sent: %.50s…", response)
             else:
-                # Slow path: get response from supervisor
-                response = await self.supervisor.process_message(
+                # Slow path: Queue for human review instead of sending
+                review_item = await self.supervisor.process_message(
                     msg["user_id"], msg["message"]
                 )
 
-                # NUEVO: Validate response with Constitution
-                if not self.constitution.validate(response):
-                    logger.warning(
-                        "Constitution blocked response for user %s. Original: %.100s...",
-                        msg["user_id"],
-                        response
-                    )
-                    # Use safe response instead
-                    response = self.constitution.get_safe_response()
+                # Add chat_id to the review item for sending later
+                review_item.conversation_context["chat_id"] = msg["chat_id"]
 
-                    # Log violation for metrics
-                    await self._log_constitution_violation(
-                        msg["user_id"],
-                        msg["message"],
-                        response
-                    )
-
-            await self.client.send_message(msg["chat_id"], response)
-            logger.info("Response sent via %s: %.50s…", route, response)
+                # Queue the review item
+                await self._queue_for_review(review_item)
+                logger.info("Message queued for review: %s (priority: %.2f)",
+                           review_item.id, review_item.priority)
 
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing WAL message: %s", exc)
             await self.client.send_message(
                 msg["chat_id"],
-                "Sorry, I'm experiencing high volume right now. "
-                "Give me just a moment to catch up! 😅",
+                "Oops, getting lots of messages rn! Give me a sec 😅"
             )
+
+    # ────────────────────────────────
+    # HITL Review Queue Management
+    # ────────────────────────────────
+    async def _queue_for_review(self, review_item: ReviewItem):
+        """Queue a ReviewItem for human review."""
+        try:
+            r = await self._get_redis()
+
+            # Serialize ReviewItem to JSON
+            review_data = {
+                "id": review_item.id,
+                "user_id": review_item.user_id,
+                "user_message": review_item.user_message,
+                "ai_suggestion": {
+                    "llm1_raw": review_item.ai_suggestion.llm1_raw,
+                    "llm2_bubbles": review_item.ai_suggestion.llm2_bubbles,
+                    "constitution_analysis": {
+                        "flags": review_item.ai_suggestion.constitution_analysis.flags,
+                        "risk_score": review_item.ai_suggestion.constitution_analysis.risk_score,
+                        "recommendation": review_item.ai_suggestion.constitution_analysis.recommendation.value,
+                        "violations": review_item.ai_suggestion.constitution_analysis.violations
+                    },
+                    "tokens_used": review_item.ai_suggestion.tokens_used,
+                    "generation_time": review_item.ai_suggestion.generation_time
+                },
+                "priority": review_item.priority,
+                "timestamp": review_item.timestamp.isoformat(),
+                "conversation_context": review_item.conversation_context
+            }
+
+            # Store in hash (for retrieval)
+            await r.hset(self.review_items_key, review_item.id, json.dumps(review_data))
+
+            # Add to priority queue (sorted set by priority score)
+            await r.zadd(self.review_queue_key, {review_item.id: review_item.priority})
+
+            # NUEVO: Also save to PostgreSQL for dashboard
+            try:
+                db_id = await self.db_manager.save_interaction(review_item)
+                logger.info("ReviewItem %s saved to database with ID %s", review_item.id, db_id)
+            except Exception as db_exc:
+                logger.error("Error saving to database: %s", db_exc)
+                # Continue with Redis-only operation
+
+            logger.info("ReviewItem %s queued with priority %.2f", review_item.id, review_item.priority)
+
+        except Exception as exc:
+            logger.error("Error queueing review item: %s", exc)
+
+    async def send_approved_message(self, review_id: str, approved_bubbles: list):
+        """Send approved message bubbles to user."""
+        try:
+            r = await self._get_redis()
+
+            # Get review item data
+            review_data_json = await r.hget(self.review_items_key, review_id)
+            if not review_data_json:
+                logger.error("Review item %s not found", review_id)
+                return False
+
+            review_data = json.loads(review_data_json)
+            chat_id = review_data["conversation_context"]["chat_id"]
+
+            # Send each bubble as separate message
+            for bubble in approved_bubbles:
+                if bubble.strip():  # Skip empty bubbles
+                    await self.client.send_message(chat_id, bubble.strip())
+                    await asyncio.sleep(0.5)  # Small delay between bubbles
+
+            # Clean up from queue
+            await r.zrem(self.review_queue_key, review_id)
+            await r.hdel(self.review_items_key, review_id)
+
+            logger.info("Approved message sent for review %s", review_id)
+            return True
+
+        except Exception as exc:
+            logger.error("Error sending approved message: %s", exc)
+            return False
 
     # ────────────────────────────────
     # Constitution Violation Logging
@@ -203,25 +281,21 @@ class UserBot:
         m = message.lower().strip()
         fast = {
             "/help": (
-                "🌟 Hello! I'm Nadia, your conversational assistant.\n\n"
-                "You can talk to me naturally or use these commands:\n"
-                "• /help - Show this message\n"
-                "• /status - Check my current status\n"
-                "• /version - See my version\n\n"
-                "What can I help you with today? 💫"
+                "🌟 Hey! I'm Nadia, your chat buddy here.\n\n"
+                "Just talk to me naturally or use:\n"
+                "• /help - This message\n"
+                "• /status - Check my status\n\n"
+                "What's on your mind? 💭"
             ),
-            "/ayuda": "Same as /help 😊",
-            "/status": "✨ Status: Working perfectly\n🧠 Memory: Active\n💬 Mode: Conversational",
-            "/estado": "Same as /status 🎯",
-            "/version": "🤖 Nadia v0.2.0 - Sprint 2\n🧠 Adaptive Consciousness Architecture",
-            "/start": "Hello! 👋 I'm Nadia. How can I help you today?",
-            "/stop": "Goodbye! 👋 It was a pleasure talking with you.",
-            "/commands": "Use /help to see all available commands 📋",
+            "/start": "Hey there! 👋 I'm Nadia. What's up?",
+            "/stop": "Bye for now! 👋 Hit me up anytime!",
+            "/status": "✨ All good here!\n🧠 Memory: Active\n💬 Mode: Chatty",
+            "/commands": "Check /help for what I can do 📋",
         }
         return fast.get(m, "Command not recognized. Use /help to see available commands.")
 
     # ────────────────────────────────
-    # Direct Fallback (without WAL)
+    # Direct Fallback (without WAL) - HITL Mode
     # ────────────────────────────────
     async def _handle_message_direct(self, event):
         try:
@@ -235,26 +309,23 @@ class UserBot:
 
             if route == "fast_path":
                 response = await self._handle_fast_path(message)
+                await event.reply(response)
+                logger.info("Direct fast path response sent: %.50s...", response)
             else:
-                # Process with supervisor
-                response = await self.supervisor.process_message(user_id, message)
+                # Process with supervisor to get ReviewItem
+                review_item = await self.supervisor.process_message(user_id, message)
 
-                # NUEVO: Validate with Constitution even in direct path
-                if not self.constitution.validate(response):
-                    logger.warning(
-                        "Constitution blocked direct response for user %s",
-                        user_id
-                    )
-                    response = self.constitution.get_safe_response()
+                # Add chat_id for direct messages
+                review_item.conversation_context["chat_id"] = event.chat_id
 
-            await event.reply(response)
-            logger.info("Direct response sent: %.50s...", response)
+                # Queue for review (same as WAL path)
+                await self._queue_for_review(review_item)
+                logger.info("Direct message queued for review: %s", review_item.id)
 
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing direct message: %s", exc)
             await event.reply(
-                "Sorry, I'm experiencing high volume right now. "
-                "Give me just a moment to catch up! 😅"
+                "Oops, getting lots of messages rn! Give me a sec 😅"
             )
 
 

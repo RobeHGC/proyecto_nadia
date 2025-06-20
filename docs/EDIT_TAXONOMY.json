@@ -1,0 +1,83 @@
+{
+  "edit_taxonomy_v1": {
+    "tone_adjustments": {
+      "REDUCED_CRINGE": {
+        "description": "Reduced cringe/melodrama",
+        "label_studio_code": "REDUCED_CRINGE",
+        "examples": [
+          {"from": "Oh my darling, I miss you terribly", "to": "miss you!"}
+        ]
+      },
+      "INCREASED_FLIRT": {
+        "description": "Increased flirty tone",
+        "label_studio_code": "INCREASED_FLIRT",
+        "examples": [
+          {"from": "Hello", "to": "heyyy 😏"}
+        ]
+      },
+      "MORE_CASUAL": {
+        "description": "Made more casual",
+        "label_studio_code": "MORE_CASUAL",
+        "examples": [
+          {"from": "How are you doing?", "to": "how's it going?"}
+        ]
+      }
+    },
+    "language_edits": {
+      "ENGLISH_SLANG": {
+        "description": "Added American slang",
+        "label_studio_code": "ENGLISH_SLANG",
+        "examples": [
+          {"from": "very good", "to": "awesome"},
+          {"from": "hello", "to": "hey"}
+        ]
+      },
+      "TEXT_SPEAK": {
+        "description": "Converted to text speak",
+        "label_studio_code": "TEXT_SPEAK",
+        "examples": [
+          {"from": "you", "to": "u"},
+          {"from": "your", "to": "ur"}
+        ]
+      }
+    },
+    "structure_changes": {
+      "STRUCT_SHORTEN": {
+        "description": "Shortened significantly",
+        "label_studio_code": "STRUCT_SHORTEN"
+      },
+      "STRUCT_BUBBLE": {
+        "description": "Changed bubble division",
+        "label_studio_code": "STRUCT_BUBBLE"
+      }
+    },
+    "content_modifications": {
+      "CONTENT_EMOJI_ADD": {
+        "description": "Added emojis",
+        "label_studio_code": "CONTENT_EMOJI_ADD"
+      },
+      "CONTENT_QUESTION": {
+        "description": "Added engaging question",
+        "label_studio_code": "CONTENT_QUESTION"
+      },
+      "CONTENT_REWRITE": {
+        "description": "Complete rewrite",
+        "label_studio_code": "CONTENT_REWRITE"
+      }
+    },
+    "cta_operations": {
+      "CTA_SOFT": {
+        "description": "Soft CTA inserted",
+        "label_studio_code": "CTA_SOFT"
+      },
+      "CTA_MEDIUM": {
+        "description": "Medium CTA inserted",
+        "label_studio_code": "CTA_MEDIUM"
+      },
+      "CTA_DIRECT": {
+        "description": "Direct CTA inserted",
+        "label_studio_code": "CTA_DIRECT"
+      }
+    }
+  }
+}

@@ -21,4 +21,19 @@ htmlcov/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.dbbot_session.session
+# Documentation for Claude
+.claude/
+CLAUDE.md
+INSTRUCCIONESPARACLAUDE.MD
+ENGLISH_MIGRATION.MD
+review_sprint_*.md
+logs.md
+
+# Session files
+bot_session.session
+*.session
+
+# Architecture docs (keep local)
+ARCHITECTURE.md
+REQUIREMENTS.md
