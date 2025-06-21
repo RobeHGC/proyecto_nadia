@@ -136,7 +136,7 @@ class TestConstitution:
         is_valid, violations = constitution.validate_with_detail("I love you so much my darling")
         assert not is_valid
         assert len(violations) >= 2
-        assert any("i love you" in v for v in violations)
+        assert any("loveyou" in v for v in violations)
 
     def test_safe_response_generation(self, constitution):
         """Verifies safe responses are generated."""

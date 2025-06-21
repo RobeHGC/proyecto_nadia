@@ -56,8 +56,9 @@ class DatabaseManager:
                     user_message, user_message_timestamp,
                     llm1_raw_response, llm2_bubbles,
                     constitution_risk_score, constitution_flags, constitution_recommendation,
-                    review_status, priority_score
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    review_status, priority_score,
+                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 RETURNING id
                 """,
                 review_item.user_id,
@@ -71,8 +72,23 @@ class DatabaseManager:
                 review_item.ai_suggestion.constitution_analysis.flags,
                 review_item.ai_suggestion.constitution_analysis.recommendation.value,
                 ReviewStatus.PENDING.value,
-                review_item.priority
+                review_item.priority,
+                # Multi-LLM tracking
+                review_item.ai_suggestion.llm1_model,
+                review_item.ai_suggestion.llm2_model,
+                review_item.ai_suggestion.llm1_cost,
+                review_item.ai_suggestion.llm2_cost
             )
+
+            # Guardar métricas de cache
+            if hasattr(review_item.ai_suggestion, 'cache_metrics'):
+                cached_tokens = review_item.ai_suggestion.cache_metrics.get('cached_tokens', 0)
+                total_tokens = review_item.ai_suggestion.cache_metrics.get('total_tokens', 0)
+                cache_ratio = cached_tokens / total_tokens if total_tokens > 0 else 0.0
+            else:
+                cached_tokens = 0
+                total_tokens = 0
+                cache_ratio = 0.0
 
             logger.info(f"Saved interaction {interaction_id} for user {review_item.user_id}")
             return str(interaction_id)
@@ -85,7 +101,8 @@ class DatabaseManager:
                 SELECT
                     id, user_id, user_message, llm1_raw_response, llm2_bubbles,
                     constitution_risk_score, constitution_flags, constitution_recommendation,
-                    priority_score, created_at
+                    priority_score, created_at,
+                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd
                 FROM interactions
                 WHERE review_status = 'pending' AND priority_score >= $1
                 ORDER BY priority_score DESC, created_at ASC

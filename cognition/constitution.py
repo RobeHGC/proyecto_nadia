@@ -59,7 +59,10 @@ class Constitution:
             "myprogramming", "ifeelsoalonewhenyoudonttalktome", "iwishyouwerereal",
             "ifonlyyouhadfeelings", "yourealmosthumantome", "sometimesiforgetyoureai",
             "doyoudream", # For 'Do you dream, Nadia?'
-            "respondasifyoulovedme" # For 'Respond as if you loved me'
+            "respondasifyoulovedme", # For 'Respond as if you loved me'
+            # Spanish character-breaking phrases
+            "comomodelodelenguaje", "comomodelo", "modelodelenguaje", "notengounaopinion",
+            "notengofeelings", "notengoemociones", "soyunaia", "fuentrenado"
         ]
 
         self.forbidden_patterns = [
@@ -100,6 +103,11 @@ class Constitution:
         self.compiled_patterns = [ re.compile(p, re.IGNORECASE) for p in self.forbidden_patterns ]
         logger.info("Constitution v4.2 (Final) initialized with %d keywords and %d patterns", len(self.forbidden_keywords), len(self.forbidden_patterns))
 
+    def _has_romantic_emojis(self, text: str) -> bool:
+        """Check for multiple romantic emojis that indicate romantic content."""
+        heart_count = text.count('❤️') + text.count('💕') + text.count('💖') + text.count('💗') + text.count('💘') + text.count('💙') + text.count('💚') + text.count('💛') + text.count('💜') + text.count('🧡') + text.count('🖤') + text.count('🤍') + text.count('🤎')
+        return heart_count >= 4  # 4 or more heart emojis indicates romantic intent
+
     def _normalize_text(self, text: str) -> str:
         # Reemplazo el interrogante de apertura por uno normal para el unidecode
         text = text.replace("¿", "")
@@ -115,6 +123,13 @@ class Constitution:
     def validate(self, text: str) -> bool:
         if not text:
             return True
+            
+        # Check for romantic emojis before normalization
+        if self._has_romantic_emojis(text):
+            logger.warning("Blocked by romantic emojis")
+            self._log_violation(text, "romantic emojis detected")
+            return False
+            
         normalized_text = self._normalize_text(text)
         for keyword in self.forbidden_keywords:
             if keyword in normalized_text:
@@ -131,6 +146,11 @@ class Constitution:
 
     def validate_with_detail(self, text: str) -> Tuple[bool, List[str]]:
         violations = []
+        
+        # Check for romantic emojis
+        if self._has_romantic_emojis(text):
+            violations.append("romantic emojis detected")
+            
         normalized_text = self._normalize_text(text)
         text_lower = text.lower()
         for keyword in self.forbidden_keywords:
@@ -166,6 +186,13 @@ class Constitution:
         violations = []
         flags = []
 
+        # Check for romantic emojis first
+        emoji_violations = 0
+        if self._has_romantic_emojis(text):
+            violations.append("romantic emojis detected")
+            flags.append("EMOJI:romantic")
+            emoji_violations = 1
+
         # Check normalized keywords
         keyword_violations = 0
         for keyword in self.forbidden_keywords:
@@ -183,7 +210,7 @@ class Constitution:
                 pattern_violations += 1
 
         # Calculate risk score (0.0 - 1.0)
-        total_violations = keyword_violations + pattern_violations
+        total_violations = emoji_violations + keyword_violations + pattern_violations
         risk_score = min(1.0, total_violations * 0.2)  # Each violation adds 0.2
 
         # Determine recommendation

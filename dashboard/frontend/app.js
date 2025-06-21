@@ -82,6 +82,10 @@ class HITLDashboard {
             const avgTime = metrics.avg_review_time_seconds;
             const avgTimeFormatted = avgTime > 0 ? `${Math.round(avgTime)}s` : '-';
             document.getElementById('avg-review-time').textContent = avgTimeFormatted;
+            
+            // Update multi-LLM metrics
+            this.updateQuotaDisplay(metrics.gemini_quota_used_today, metrics.gemini_quota_total);
+            this.updateSavingsDisplay(metrics.savings_today_usd);
         } catch (error) {
             console.error('Failed to load metrics:', error);
         }
@@ -119,6 +123,7 @@ class HITLDashboard {
                         <span class="risk-badge ${this.getRiskClass(review.constitution_recommendation)}">
                             ${review.constitution_recommendation.toUpperCase()}
                         </span>
+                        ${this.renderCacheWarning(review)}
                     </div>
                 </div>
                 <div class="user-message">
@@ -126,6 +131,9 @@ class HITLDashboard {
                 </div>
                 <div class="ai-response">
                     ${review.llm2_bubbles.join(' • ')}
+                </div>
+                <div class="badges-container">
+                    ${this.formatModelBadges(review.llm1_model, review.llm2_model, review.llm1_cost_usd, review.llm2_cost_usd)}
                 </div>
             </div>
         `).join('');
@@ -424,6 +432,58 @@ class HITLDashboard {
         this.qualityScore = 3;
         // NUEVO: Reset CTA state
         this.ctaInserted = null;
+    }
+    
+    // Multi-LLM helper functions
+    formatModelBadges(llm1Model, llm2Model, llm1Cost, llm2Cost) {
+        let badges = '';
+        
+        if (llm1Model) {
+            const isFree = llm1Model.toLowerCase().includes('gemini') && (llm1Cost === 0 || llm1Cost === null);
+            badges += this.formatModelBadge(llm1Model, isFree, 'LLM-1');
+        }
+        
+        if (llm2Model) {
+            const isFree = llm2Model.toLowerCase().includes('gemini') && (llm2Cost === 0 || llm2Cost === null);
+            badges += this.formatModelBadge(llm2Model, isFree, 'LLM-2');
+        }
+        
+        return badges;
+    }
+    
+    formatModelBadge(model, isFree, label) {
+        const modelName = model.split('-')[0] || model; // "gemini-2.0-flash-exp" -> "gemini"
+        const isGemini = modelName.toLowerCase().includes('gemini');
+        const badgeClass = isGemini ? 'model-badge-gemini' : 'model-badge-gpt';
+        const freeText = isFree ? '<span class="model-badge-free">FREE</span>' : '';
+        
+        return `<span class="model-badge ${badgeClass}">
+            ${label}: ${modelName.charAt(0).toUpperCase() + modelName.slice(1)}
+            ${freeText}
+        </span>`;
+    }
+    
+    updateQuotaDisplay(used, total) {
+        const percentage = (used / total) * 100;
+        const quotaText = `${used.toLocaleString()} / ${total.toLocaleString()}`;
+        
+        document.getElementById('gemini-quota').textContent = `${percentage.toFixed(1)}%`;
+        document.getElementById('quota-text').textContent = quotaText;
+        document.getElementById('quota-progress-fill').style.width = `${percentage}%`;
+    }
+    
+    updateSavingsDisplay(savings) {
+        const formattedSavings = savings > 0 ? `$${savings.toFixed(4)}` : '$0.00';
+        document.getElementById('savings-today').textContent = formattedSavings;
+    }
+    
+    renderCacheWarning(review) {
+        // En renderReviews()
+        if (review.cache_ratio !== undefined && review.cache_ratio < 0.5) {
+            // Agregar warning badge
+            return '<span class="cache-warning">⚠️ Low Cache</span>';
+        }
+        return '';
     }
 }
 

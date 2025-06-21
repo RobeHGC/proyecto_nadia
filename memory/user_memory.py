@@ -144,3 +144,61 @@ class UserMemoryManager:
         except Exception as e:
             logger.error(f"Error obteniendo lista de usuarios: {e}")
             return []
+
+    async def get_conversation_history(self, user_id: str) -> list[Dict[str, Any]]:
+        """
+        Obtiene el historial de conversación de un usuario.
+        
+        Args:
+            user_id: ID del usuario
+            
+        Returns:
+            Lista de mensajes del historial
+        """
+        try:
+            r = await self._get_redis()
+            
+            # Obtener historial desde Redis
+            history_key = f"user:{user_id}:history"
+            history_data = await r.get(history_key)
+            
+            if history_data:
+                return json.loads(history_data)
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error obteniendo historial para {user_id}: {e}")
+            return []
+
+    async def add_to_conversation_history(self, user_id: str, message: Dict[str, Any]) -> None:
+        """
+        Agrega un mensaje al historial de conversación.
+        
+        Args:
+            user_id: ID del usuario
+            message: Mensaje a agregar (debe incluir 'role' y 'content')
+        """
+        try:
+            r = await self._get_redis()
+            
+            # Obtener historial actual
+            history = await self.get_conversation_history(user_id)
+            
+            # Agregar nuevo mensaje
+            history.append(message)
+            
+            # Mantener solo los últimos 20 mensajes para evitar que crezca demasiado
+            if len(history) > 20:
+                history = history[-20:]
+            
+            # Guardar historial actualizado
+            history_key = f"user:{user_id}:history"
+            await r.set(
+                history_key,
+                json.dumps(history),
+                ex=86400 * 7  # Expirar en 7 días
+            )
+            
+        except Exception as e:
+            logger.error(f"Error agregando al historial para {user_id}: {e}")
