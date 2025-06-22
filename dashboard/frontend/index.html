@@ -54,6 +54,58 @@
             margin-top: 0.25rem;
         }
         
+        /* Model badges styles */
+        .model-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: white;
+            margin: 0.125rem;
+        }
+        
+        .model-badge-gemini {
+            background: #4caf50;
+        }
+        
+        .model-badge-gpt {
+            background: #2196f3;
+        }
+        
+        .model-badge-free {
+            background: #ff9800;
+            font-size: 0.6rem;
+            padding: 0.125rem 0.25rem;
+            margin-left: 0.25rem;
+        }
+        
+        .badges-container {
+            margin-top: 0.5rem;
+        }
+        
+        /* Quota progress bar */
+        .quota-progress {
+            width: 100%;
+            height: 8px;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+        
+        .quota-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50 0%, #ff9800 70%, #f44336 100%);
+            transition: width 0.3s ease;
+        }
+        
+        .quota-text {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+        
         .main-content {
             display: flex;
             gap: 2rem;
@@ -174,6 +226,159 @@
             outline: none;
             border-color: #80bdff;
             box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+        
+        /* Bubble container for delete functionality */
+        .bubble-container {
+            position: relative;
+            margin-bottom: 0.5rem;
+        }
+        
+        .btn-delete-bubble {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        
+        .btn-delete-bubble:hover {
+            opacity: 1;
+            background: #c82333;
+        }
+        
+        .bubble-container:hover .btn-delete-bubble {
+            opacity: 1;
+        }
+        
+        /* Constitution Analysis Styles */
+        .constitution-section {
+            border-left: 4px solid #9c27b0;
+        }
+        
+        .constitution-content {
+            padding: 1rem;
+            background: white;
+        }
+        
+        .constitution-score {
+            margin-bottom: 0.75rem;
+        }
+        
+        .score-value {
+            font-weight: bold;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            color: white;
+        }
+        
+        .score-value.score-low {
+            background: #28a745;
+        }
+        
+        .score-value.score-medium {
+            background: #ffc107;
+            color: #212529;
+        }
+        
+        .score-value.score-high {
+            background: #dc3545;
+        }
+        
+        .constitution-flags {
+            margin-bottom: 0.75rem;
+        }
+        
+        .flags-list {
+            margin-top: 0.25rem;
+        }
+        
+        .flag-item {
+            display: inline-block;
+            background: #ffc107;
+            color: #212529;
+            padding: 0.125rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            margin: 0.125rem;
+        }
+        
+        .constitution-violations {
+            margin-bottom: 0.75rem;
+        }
+        
+        .violations-list {
+            margin: 0.25rem 0 0 1.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .violations-list li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* LLM Response Sections */
+        .llm-section {
+            margin-bottom: 1.5rem;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .llm-header {
+            background: #f8f9fa;
+            padding: 0.75rem 1rem;
+            margin: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .llm-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .llm-badge.llm1 {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .llm-badge.llm2 {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .model-name {
+            font-size: 0.8rem;
+            color: #666;
+            font-weight: normal;
+        }
+
+        .llm1-response {
+            padding: 1rem;
+            background: #fafafa;
+            font-style: italic;
+            line-height: 1.5;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .bubbles-editable {
+            padding: 1rem;
         }
         
         .tags-section {
@@ -338,11 +543,158 @@
             background: linear-gradient(135deg, #ee5a24 0%, #d63031 100%);
         }
         
+        .btn-cta-delete {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+            color: white;
+        }
+        
+        .btn-cta-delete:hover {
+            background: linear-gradient(135deg, #495057 0%, #343a40 100%);
+        }
+        
         .cta-bubble {
             border-left: 4px solid #ff6b6b !important;
             background: #fff5f5 !important;
         }
         
+        /* LLM Section Styles */
+        .llm-section {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .llm-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        
+        .llm-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+        }
+        
+        .llm-badge.llm1 {
+            background: #ff9800;
+        }
+        
+        .llm-badge.llm2 {
+            background: #2196f3;
+        }
+        
+        .llm-badge.constitution {
+            background: #9c27b0;
+        }
+        
+        .model-name {
+            color: #666;
+            font-weight: 400;
+            font-size: 0.9rem;
+        }
+        
+        .llm1-response {
+            background: white;
+            padding: 1rem;
+            border-radius: 6px;
+            border-left: 4px solid #ff9800;
+            font-style: italic;
+            color: #555;
+            white-space: pre-wrap;
+        }
+        
+        .bubbles-editable {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        /* Customer Status Section Styles */
+        .customer-status-section {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .customer-status-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .customer-status-dropdown {
+            flex: 1;
+            min-width: 200px;
+            padding: 0.5rem;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            background: white;
+        }
+
+        .ltv-input {
+            width: 120px;
+            padding: 0.5rem;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .btn-update-status {
+            padding: 0.5rem 1rem;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .btn-update-status:hover {
+            background: #0056b3;
+        }
+
+        .current-status-display {
+            margin-top: 0.5rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+            background: #6c757d;
+        }
+
+        .status-badge.PROSPECT { background: #6c757d; }
+        .status-badge.LEAD_QUALIFIED { background: #28a745; }
+        .status-badge.CUSTOMER { background: #ffc107; color: #212529; }
+        .status-badge.CHURNED { background: #dc3545; }
+        .status-badge.LEAD_EXHAUSTED { background: #343a40; }
+
+        .ltv-display {
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 600;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 flex-direction: column;
@@ -372,6 +724,18 @@
         <div class="metric">
             <div class="metric-value" id="avg-review-time">-</div>
             <div class="metric-label">Avg Review Time</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="gemini-quota">-</div>
+            <div class="metric-label">Gemini Quota</div>
+            <div class="quota-progress">
+                <div class="quota-progress-fill" id="quota-progress-fill"></div>
+            </div>
+            <div class="quota-text" id="quota-text">0 / 32,000</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="savings-today">$0.00</div>
+            <div class="metric-label">Savings Today</div>
         </div>
     </div>
     
@@ -419,17 +783,47 @@
                             <button class="btn-cta btn-cta-direct" onclick="insertCTADirect()" title="CTA directo">
                                 🔥 Direct CTA
                             </button>
+                            <button class="btn-cta btn-cta-delete" onclick="dashboard.deleteCTA()" title="Delete all CTA bubbles">
+                                🗑️ Delete CTAs
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="customer-status-section">
+                        <h4>👤 Customer Status</h4>
+                        <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
+                            Set the customer funnel status for this user
+                        </p>
+                        <div class="customer-status-controls">
+                            <select id="customer-status-select" class="customer-status-dropdown">
+                                <option value="PROSPECT">🎯 Prospect (No CTA sent)</option>
+                                <option value="LEAD_QUALIFIED">✨ Lead Qualified (Engaged)</option>
+                                <option value="CUSTOMER">💰 Customer (Converted)</option>
+                                <option value="CHURNED">📉 Churned (Stopped paying)</option>
+                                <option value="LEAD_EXHAUSTED">😴 Lead Exhausted (No potential)</option>
+                            </select>
+                            <input type="number" id="ltv-input" placeholder="LTV Amount ($)" min="0" step="0.01" class="ltv-input">
+                            <button class="btn btn-update-status" onclick="dashboard.updateCustomerStatus()">
+                                Update Status
+                            </button>
+                        </div>
+                        <div id="current-status-display" class="current-status-display">
+                            <span class="status-badge">Current: PROSPECT</span>
+                            <span class="ltv-display">LTV: $0.00</span>
                         </div>
                     </div>
                     
                     <div class="quality-section">
-                        <h4>⭐ Quality Score</h4>
+                        <h4>⭐ LLM2 Humanization Quality</h4>
+                        <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
+                            Rate how well LLM2 refined the response to sound human-like
+                        </p>
                         <div class="quality-stars" id="quality-stars">
-                            <span class="star" data-rating="1">⭐</span>
-                            <span class="star" data-rating="2">⭐</span>
-                            <span class="star" data-rating="3">⭐</span>
-                            <span class="star" data-rating="4">⭐</span>
-                            <span class="star" data-rating="5">⭐</span>
+                            <span class="star" data-rating="1" style="cursor: pointer; user-select: none;">★</span>
+                            <span class="star" data-rating="2" style="cursor: pointer; user-select: none;">★</span>
+                            <span class="star selected" data-rating="3" style="cursor: pointer; user-select: none;">★</span>
+                            <span class="star" data-rating="4" style="cursor: pointer; user-select: none;">★</span>
+                            <span class="star" data-rating="5" style="cursor: pointer; user-select: none;">★</span>
                         </div>
                     </div>
                     

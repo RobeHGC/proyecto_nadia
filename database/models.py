@@ -57,8 +57,9 @@ class DatabaseManager:
                     llm1_raw_response, llm2_bubbles,
                     constitution_risk_score, constitution_flags, constitution_recommendation,
                     review_status, priority_score,
-                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd,
+                    customer_status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                 RETURNING id
                 """,
                 review_item.user_id,
@@ -77,7 +78,9 @@ class DatabaseManager:
                 review_item.ai_suggestion.llm1_model,
                 review_item.ai_suggestion.llm2_model,
                 review_item.ai_suggestion.llm1_cost,
-                review_item.ai_suggestion.llm2_cost
+                review_item.ai_suggestion.llm2_cost,
+                # Customer status - default to PROSPECT for new interactions
+                'PROSPECT'
             )
 
             # Guardar métricas de cache
@@ -102,7 +105,7 @@ class DatabaseManager:
                     id, user_id, user_message, llm1_raw_response, llm2_bubbles,
                     constitution_risk_score, constitution_flags, constitution_recommendation,
                     priority_score, created_at,
-                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd
+                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd, customer_status
                 FROM interactions
                 WHERE review_status = 'pending' AND priority_score >= $1
                 ORDER BY priority_score DESC, created_at ASC

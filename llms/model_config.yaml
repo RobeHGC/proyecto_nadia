@@ -1,0 +1,221 @@
+models:
+  openai:
+    gpt-4o-nano:
+      model_id: "gpt-4.1-nano"
+      max_tokens: 16384
+      supports_caching: true
+      cost_per_million_input: 0.10
+      cost_per_million_output: 0.40
+      cost_per_million_cached: 0.025  # 75% discount!
+      description: "GPT-4.1 Nano - Ultra-efficient with caching support"
+      capabilities: ["text"]
+      context_window: 128000
+      rpm_limit: 15000
+      
+    gpt-4o-mini:
+      model_id: "gpt-4o-mini-2024-07-18"
+      max_tokens: 16384
+      supports_caching: true
+      cost_per_million_input: 0.15
+      cost_per_million_output: 0.60
+      cost_per_million_cached: 0.075
+      description: "GPT-4o Mini - Efficient and cost-effective"
+      capabilities: ["text", "reasoning"]
+      context_window: 128000
+      rpm_limit: 10000
+      
+    gpt-4o:
+      model_id: "gpt-4o"
+      cost_per_million_input: 2.50
+      cost_per_million_output: 10.00
+      description: "GPT-4o - Premium model for complex tasks"
+      capabilities: ["text", "reasoning", "multimodal"]
+      context_window: 128000
+      rpm_limit: 5000
+      
+    gpt-3.5-turbo:
+      model_id: "gpt-3.5-turbo"
+      cost_per_million_input: 0.50
+      cost_per_million_output: 1.50
+      description: "GPT-3.5 Turbo - Legacy model for compatibility"
+      capabilities: ["text"]
+      context_window: 16384
+      rpm_limit: 3500
+
+  gemini:
+    2.0-flash-lite:
+      model_id: "gemini-2.0-flash-lite"
+      free_quota_daily: 32000
+      rpm_limit: 1500
+      supports_caching: false
+      cost_per_million_input: 0.075  # Cheaper without cache
+      cost_per_million_output: 0.30
+      description: "Gemini 2.0 Flash Lite - Cheaper model without caching"
+      capabilities: ["text", "multimodal"]
+      context_window: 1048576
+      
+    2.0-flash:
+      model_id: "gemini-2.0-flash-exp"
+      free_quota_daily: 32000
+      rpm_limit: 1500
+      supports_caching: true
+      cost_per_million_input: 0.10
+      cost_per_million_output: 0.40
+      cost_per_million_cached: 0.025
+      cache_storage_cost_per_million_per_hour: 1.00
+      description: "Gemini 2.0 Flash - Free tier model with caching support"
+      capabilities: ["text", "multimodal"]
+      context_window: 1048576
+      
+    2.5-flash:
+      model_id: "gemini-2.5-flash"
+      free_quota_daily: 32000
+      rpm_limit: 1500
+      supports_caching: true
+      max_context_window: 1000000
+      cost_per_million_input: 0.30
+      cost_per_million_output: 2.50
+      cost_per_million_cached: 0.075
+      cache_storage_cost_per_million_per_hour: 1.00
+      description: "Gemini 2.5 Flash - Premium model with enhanced capabilities"
+      capabilities: ["text", "multimodal", "code"]
+      context_window: 1048576
+      
+    2.5-pro:
+      model_id: "gemini-2.5-pro"
+      free_quota_daily: 0  # NO free tier
+      rpm_limit: 1000
+      supports_caching: true
+      cost_per_million_input: 1.25
+      cost_per_million_output: 10.00
+      cost_per_million_cached: 0.31
+      cache_storage_cost_per_million_per_hour: 4.50
+      description: "Gemini 2.5 Pro - Highest quality Gemini model"
+      capabilities: ["text", "multimodal", "code", "reasoning"]
+      context_window: 2097152
+
+profiles:
+  # STRATEGY 1: Maximum Savings (100% Free Gemini)
+  free_tier:
+    name: "Free Tier"
+    description: "100% free up to 32k messages/day"
+    llm1: "gemini/2.0-flash"
+    llm2: "gemini/2.0-flash"
+    monthly_cost_estimate: "$0"
+    use_case: "First 1000 daily users"
+    estimated_cost_per_1k_messages: 0.0
+    
+  # STRATEGY 2: Ultra Economic
+  ultra_budget:
+    name: "Ultra Budget"
+    description: "Cheapest possible after free limit"
+    llm1: "gemini/2.0-flash-lite"
+    llm2: "gemini/2.0-flash-lite"
+    cost_per_1k_messages: "$0.375"
+    monthly_cost_1k_users: "$11.25"
+    use_case: "Maximum volume, minimum cost"
+    estimated_cost_per_1k_messages: 0.375
+    
+  # STRATEGY 3: Smart Economic (RECOMMENDED)
+  smart_economic:
+    name: "Smart Economic"
+    description: "Leverages free tier + intelligent caching"
+    llm1: "gemini/2.0-flash"      # Free up to 32k
+    llm2: "openai/gpt-4o-nano"    # $0.025 with cache
+    cost_per_1k_messages: "$0.50"
+    monthly_cost_1k_users: "$15"
+    use_case: "Perfect balance for production"
+    estimated_cost_per_1k_messages: 0.50
+    
+  # STRATEGY 4: Quality Optimized
+  quality_optimized:
+    name: "Quality Optimized"
+    description: "High quality while keeping costs low"
+    llm1: "gemini/2.5-flash"      # Best Gemini with free tier
+    llm2: "openai/gpt-4o-nano"    # Refinement with cache
+    cost_per_1k_messages: "$1.25"
+    monthly_cost_1k_users: "$37.50"
+    use_case: "Premium users or important conversations"
+    estimated_cost_per_1k_messages: 1.25
+    
+  # STRATEGY 5: Maximum Quality
+  premium:
+    name: "Premium"
+    description: "Best available (expensive)"
+    llm1: "gemini/2.5-pro"        # No free tier, top quality
+    llm2: "openai/gpt-4o-mini"    
+    cost_per_1k_messages: "$12.50"
+    monthly_cost_1k_users: "$375"
+    use_case: "Only for special cases"
+    estimated_cost_per_1k_messages: 12.50
+    
+  # STRATEGY 6: Reliable Fallback
+  fallback:
+    name: "Fallback"
+    description: "When Gemini is unavailable"
+    llm1: "openai/gpt-4o-mini"
+    llm2: "openai/gpt-4o-mini"
+    cost_per_1k_messages: "$0.75"
+    monthly_cost_1k_users: "$22.50"
+    use_case: "100% OpenAI backup"
+    estimated_cost_per_1k_messages: 0.75
+    
+  # Legacy profiles for compatibility
+  default:
+    name: "Default Profile"
+    description: "Cost-optimized with free Gemini + efficient GPT"
+    llm1: "gemini/2.0-flash"
+    llm2: "openai/gpt-4o-mini"
+    use_case: "production"
+    estimated_cost_per_1k_messages: 0.10
+    
+  testing:
+    name: "Testing Profile"
+    description: "Consistent OpenAI models for testing"
+    llm1: "openai/gpt-4o-mini"
+    llm2: "openai/gpt-4o-mini"
+    use_case: "development"
+    estimated_cost_per_1k_messages: 0.30
+    
+  experimental:
+    name: "Experimental Profile"
+    description: "High-end models for R&D"
+    llm1: "gemini/2.5-pro"
+    llm2: "openai/gpt-4o"
+    use_case: "research"
+    estimated_cost_per_1k_messages: 8.50
+    
+  budget:
+    name: "Budget Profile"
+    description: "Minimal cost configuration"
+    llm1: "gemini/2.0-flash"
+    llm2: "openai/gpt-3.5-turbo"
+    use_case: "cost-sensitive"
+    estimated_cost_per_1k_messages: 0.05
+
+# Global settings
+settings:
+  default_profile: "smart_economic"
+  hot_reload_enabled: true
+  cache_ttl_seconds: 300
+  quota_check_enabled: true
+  cost_tracking_enabled: true
+  auto_switch_rules:
+    - if: "daily_messages < 32000"
+      use: "free_tier"
+    - if: "daily_messages > 32000 AND budget < 50"
+      use: "ultra_budget"
+    - if: "user_value > 0.8"
+      use: "quality_optimized"
+  cache_strategy:
+    enable_for_conversations_longer_than: 3
+    cache_ttl_minutes: 30
+    prioritize_nano_cache: true
+  
+# Feature flags
+features:
+  multi_modal_support: true
+  cost_optimization: true
+  automatic_fallback: true
+  profile_switching: true
+  usage_analytics: true

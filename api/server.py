@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import redis.asyncio as redis
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
@@ -17,6 +17,9 @@ from slowapi.util import get_remote_address
 
 from database.models import DatabaseManager
 from memory.user_memory import UserMemoryManager
+from llms.quota_manager import GeminiQuotaManager
+from llms.model_registry import get_model_registry
+from llms.dynamic_router import get_dynamic_router
 from utils.config import Config
 
 logging.basicConfig(level=logging.INFO)
@@ -49,10 +52,11 @@ class ReviewApprovalRequest(BaseModel):
     def validate_tags(cls, v):
         allowed_tags = {
             'CTA_SOFT', 'CTA_MEDIUM', 'CTA_DIRECT',
-            'REDUCED_CRINGE', 'INCREASED_FLIRT', 'MORE_CASUAL',
+            'REDUCED_CRINGE', 'INCREASED_FLIRT',
             'ENGLISH_SLANG', 'TEXT_SPEAK', 'STRUCT_SHORTEN',
-            'STRUCT_BUBBLE', 'CONTENT_EMOJI_ADD', 'CONTENT_QUESTION',
-            'CONTENT_REWRITE'
+            'STRUCT_BUBBLE', 'CONTENT_EMOJI_ADD', 'CONTENT_EMOJI_CUT', 'CONTENT_QUESTION',
+            'CONTENT_REWRITE', 'TONE_LESS_IA', 'CONTENT_QUESTION_CUT', 
+            'CONTENT_SENTENCE_ADD', 'TONE_ROMANTIC_UP'
         }
         for tag in v:
             if tag not in allowed_tags:
@@ -84,6 +88,26 @@ class ReviewRejectionRequest(BaseModel):
         return v
 
 
+# New model management request models
+class ProfileSwitchRequest(BaseModel):
+    profile_name: str = Field(..., min_length=1, max_length=50)
+    
+    @field_validator('profile_name')
+    @classmethod
+    def validate_profile_name(cls, v):
+        # Only allow alphanumeric and underscores
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('Profile name must contain only alphanumeric characters, hyphens, and underscores')
+        return v
+
+class CustomerStatusUpdateRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    customer_status: str = Field(..., pattern='^(PROSPECT|LEAD_QUALIFIED|CUSTOMER|CHURNED|LEAD_EXHAUSTED)$')
+    reason: str = Field("Manual update from dashboard", max_length=200)
+    ltv_amount: float = Field(0.0, ge=0.0, le=10000.0)  # Max $10k LTV
+
+
 class ReviewResponse(BaseModel):
     id: str
     user_id: str
@@ -95,6 +119,13 @@ class ReviewResponse(BaseModel):
     constitution_recommendation: str
     priority_score: float
     created_at: datetime
+    # Multi-LLM tracking fields
+    llm1_model: Optional[str] = None
+    llm2_model: Optional[str] = None
+    llm1_cost_usd: Optional[float] = None
+    llm2_cost_usd: Optional[float] = None
+    # Customer status tracking
+    customer_status: Optional[str] = "PROSPECT"
 
 
 # Crear app FastAPI
@@ -132,6 +163,7 @@ app.add_middleware(
 config = Config.from_env()
 memory_manager = UserMemoryManager(config.redis_url)
 db_manager = DatabaseManager(config.database_url)
+quota_manager = GeminiQuotaManager(config.redis_url)
 
 # Redis fallback for pending reviews
 async def get_reviews_from_redis(limit: int = 20) -> List[ReviewResponse]:
@@ -158,7 +190,13 @@ async def get_reviews_from_redis(limit: int = 20) -> List[ReviewResponse]:
                     constitution_flags=review_data["ai_suggestion"]["constitution_analysis"]["flags"],
                     constitution_recommendation=review_data["ai_suggestion"]["constitution_analysis"]["recommendation"],
                     priority_score=review_data["priority"],
-                    created_at=datetime.fromisoformat(review_data["timestamp"])
+                    created_at=datetime.fromisoformat(review_data["timestamp"]),
+                    # Multi-LLM tracking fields
+                    llm1_model=review_data["ai_suggestion"].get("llm1_model"),
+                    llm2_model=review_data["ai_suggestion"].get("llm2_model"),
+                    llm1_cost_usd=review_data["ai_suggestion"].get("llm1_cost"),
+                    llm2_cost_usd=review_data["ai_suggestion"].get("llm2_cost"),
+                    customer_status=review_data.get("customer_status", "PROSPECT")
                 ))
         
         await r.aclose()
@@ -370,7 +408,14 @@ async def get_pending_reviews(
                     constitution_flags=review["constitution_flags"],
                     constitution_recommendation=review["constitution_recommendation"],
                     priority_score=review["priority_score"],
-                    created_at=review["created_at"]
+                    created_at=review["created_at"],
+                    # Multi-LLM tracking fields
+                    llm1_model=review.get("llm1_model"),
+                    llm2_model=review.get("llm2_model"),
+                    llm1_cost_usd=review.get("llm1_cost_usd"),
+                    llm2_cost_usd=review.get("llm2_cost_usd"),
+                    # Customer status
+                    customer_status=review.get("customer_status", "PROSPECT")
                 )
                 for review in reviews
             ]
@@ -387,6 +432,37 @@ async def get_pending_reviews(
 async def get_review(review_id: str):
     """Get a specific review by ID."""
     try:
+        # Check if database mode is skip
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            # Get from Redis
+            r = await redis.from_url(config.redis_url)
+            review_data_json = await r.hget("nadia_review_items", review_id)
+            await r.aclose()
+            
+            if not review_data_json:
+                raise HTTPException(status_code=404, detail="Review not found")
+                
+            review_data = json.loads(review_data_json)
+            return ReviewResponse(
+                id=review_data["id"],
+                user_id=review_data["user_id"],
+                user_message=review_data["user_message"],
+                llm1_raw_response=review_data["ai_suggestion"]["llm1_raw"],
+                llm2_bubbles=review_data["ai_suggestion"]["llm2_bubbles"],
+                constitution_risk_score=review_data["ai_suggestion"]["constitution_analysis"]["risk_score"],
+                constitution_flags=review_data["ai_suggestion"]["constitution_analysis"]["flags"],
+                constitution_recommendation=review_data["ai_suggestion"]["constitution_analysis"]["recommendation"],
+                priority_score=review_data["priority"],
+                created_at=datetime.fromisoformat(review_data["timestamp"]),
+                llm1_model=review_data["ai_suggestion"].get("llm1_model"),
+                llm2_model=review_data["ai_suggestion"].get("llm2_model"),
+                llm1_cost_usd=review_data["ai_suggestion"].get("llm1_cost"),
+                llm2_cost_usd=review_data["ai_suggestion"].get("llm2_cost"),
+                customer_status=review_data.get("customer_status", "PROSPECT")
+            )
+        
+        # Try database first
         review = await db_manager.get_interaction(review_id)
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
@@ -403,10 +479,14 @@ async def get_review(review_id: str):
 async def approve_review(review_id: str, request: ReviewApprovalRequest):
     """Approve a review and send the message."""
     try:
-        # Start the review (mark as reviewing)
-        started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
-        if not started:
-            raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
+        # Check if database mode is skip
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        
+        if database_mode != "skip":
+            # Start the review (mark as reviewing)
+            started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
+            if not started:
+                raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
 
         # NUEVO: Check if CTA was inserted and create CTA data
         cta_data = None
@@ -428,26 +508,34 @@ async def approve_review(review_id: str, request: ReviewApprovalRequest):
             logger.info(f"CTA {cta_type} inserted in review {review_id}")
 
         # Approve the review (now with CTA data)
-        approved = await db_manager.approve_review(
-            review_id,
-            request.final_bubbles,
-            request.edit_tags,
-            request.quality_score,
-            request.reviewer_notes,
-            cta_data
-        )
+        if database_mode != "skip":
+            approved = await db_manager.approve_review(
+                review_id,
+                request.final_bubbles,
+                request.edit_tags,
+                request.quality_score,
+                request.reviewer_notes,
+                cta_data
+            )
 
-        if not approved:
-            raise HTTPException(status_code=400, detail="Failed to approve review")
+            if not approved:
+                raise HTTPException(status_code=400, detail="Failed to approve review")
 
-        # Send the approved message via Redis notification
+        # Send the approved message via Redis notification and cleanup
         # The bot will pick it up and send to user
         try:
             r = await redis.from_url(config.redis_url)
+            
+            # Send approval notification
             await r.lpush("nadia_approved_messages", json.dumps({
                 "review_id": review_id,
                 "bubbles": request.final_bubbles
             }))
+            
+            # Remove from review queue
+            await r.zrem("nadia_review_queue", review_id)
+            await r.hdel("nadia_review_items", review_id)
+            
             await r.aclose()
         except Exception as e:
             logger.error(f"Error notifying bot: {e}")
@@ -470,16 +558,32 @@ async def approve_review(review_id: str, request: ReviewApprovalRequest):
 async def reject_review(review_id: str, request: ReviewRejectionRequest):
     """Reject a review."""
     try:
-        # Start the review (mark as reviewing)
-        started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
-        if not started:
-            raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
+        # Check if database mode is skip
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        
+        if database_mode != "skip":
+            # Start the review (mark as reviewing)
+            started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
+            if not started:
+                raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
 
-        # Reject the review
-        rejected = await db_manager.reject_review(review_id, request.reviewer_notes)
+            # Reject the review
+            rejected = await db_manager.reject_review(review_id, request.reviewer_notes)
 
-        if not rejected:
-            raise HTTPException(status_code=400, detail="Failed to reject review")
+            if not rejected:
+                raise HTTPException(status_code=400, detail="Failed to reject review")
+
+        # Remove from Redis queue regardless of database mode
+        try:
+            r = await redis.from_url(config.redis_url)
+            
+            # Remove from review queue
+            await r.zrem("nadia_review_queue", review_id)
+            await r.hdel("nadia_review_items", review_id)
+            
+            await r.aclose()
+        except Exception as e:
+            logger.error(f"Error cleaning up Redis: {e}")
 
         return {"status": "rejected", "review_id": review_id}
 
@@ -490,6 +594,83 @@ async def reject_review(review_id: str, request: ReviewRejectionRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+async def get_model_distribution() -> dict:
+    """Get model usage distribution for today."""
+    try:
+        async with db_manager._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT 
+                    llm1_model,
+                    llm2_model,
+                    COUNT(*) as count
+                FROM interactions 
+                WHERE DATE(created_at) = CURRENT_DATE
+                GROUP BY llm1_model, llm2_model
+                """
+            )
+            
+            distribution = {"gemini": 0, "gpt": 0, "other": 0}
+            
+            for row in rows:
+                count = row["count"]
+                llm1_model = row.get("llm1_model", "")
+                llm2_model = row.get("llm2_model", "")
+                
+                # Count LLM-1 usage
+                if "gemini" in llm1_model.lower():
+                    distribution["gemini"] += count
+                elif "gpt" in llm1_model.lower():
+                    distribution["gpt"] += count
+                else:
+                    distribution["other"] += count
+                
+                # Count LLM-2 usage (separate)
+                if "gemini" in llm2_model.lower():
+                    distribution["gemini"] += count
+                elif "gpt" in llm2_model.lower():
+                    distribution["gpt"] += count
+                else:
+                    distribution["other"] += count
+            
+            return distribution
+            
+    except Exception as e:
+        logger.error(f"Error getting model distribution: {e}")
+        return {"gemini": 0, "gpt": 0, "other": 0}
+
+
+async def calculate_daily_savings(model_stats: dict) -> float:
+    """Calculate estimated savings from using Gemini vs OpenAI for today."""
+    try:
+        # Estimated savings calculation
+        # Assuming average tokens per interaction and cost differences
+        
+        gemini_interactions = model_stats.get("gemini", 0)
+        
+        # Rough estimates based on typical usage:
+        # - Average tokens per creative response: ~500 tokens
+        # - Gemini 2.0 Flash: $0.001/1K tokens input, $0.002/1K output
+        # - GPT-4o-mini: $0.00015/1K tokens input, $0.0006/1K output
+        
+        avg_tokens_per_interaction = 500
+        
+        # Cost if all were OpenAI GPT-4o-mini
+        openai_cost_per_interaction = (avg_tokens_per_interaction / 1000) * (0.00015 + 0.0006)
+        
+        # Cost for Gemini (free tier)
+        gemini_cost_per_interaction = 0.0  # Free tier
+        
+        # Calculate savings
+        savings = gemini_interactions * (openai_cost_per_interaction - gemini_cost_per_interaction)
+        
+        return round(savings, 4)
+        
+    except Exception as e:
+        logger.error(f"Error calculating savings: {e}")
+        return 0.0
+
+
 @app.get("/metrics/dashboard")
 @limiter.limit("60/minute")
 async def get_dashboard_metrics(
@@ -498,17 +679,47 @@ async def get_dashboard_metrics(
 ):
     """Get metrics for the dashboard."""
     try:
-        # Return mock data if no database
+        # Return data from Redis if no database
         database_mode = os.getenv("DATABASE_MODE", "normal")
         if database_mode == "skip":
+            # Count pending reviews from Redis
+            r = await redis.from_url(config.redis_url)
+            pending_count = await r.zcard("nadia_review_queue")
+            quota_status = await quota_manager.get_quota_status()
+            await r.aclose()
+            
             return {
-                "pending_reviews": 0,
+                "pending_reviews": pending_count,
                 "reviewed_today": 0,
                 "avg_review_time_seconds": 0,
-                "popular_edit_tags": []
+                "popular_edit_tags": [],
+                # Multi-LLM metrics from quota manager
+                "gemini_quota_used_today": quota_status["daily_usage"],
+                "gemini_quota_total": quota_status["daily_limit"],
+                "savings_today_usd": 0.0,
+                "model_distribution": {"gemini": 0, "gpt": 0}
             }
 
+        # Get base metrics from database
         metrics = await db_manager.get_dashboard_metrics()
+        
+        # Add multi-LLM metrics
+        quota_status = await quota_manager.get_quota_status()
+        
+        # Get model distribution from database
+        model_stats = await get_model_distribution()
+        
+        # Calculate savings (estimate based on model usage)
+        savings = await calculate_daily_savings(model_stats)
+        
+        # Extend metrics with multi-LLM data
+        metrics.update({
+            "gemini_quota_used_today": quota_status["daily_usage"],
+            "gemini_quota_total": quota_status["daily_limit"],
+            "savings_today_usd": savings,
+            "model_distribution": model_stats
+        })
+        
         return metrics
     except Exception as e:
         logger.error(f"Error getting dashboard metrics: {e}")
@@ -516,7 +727,12 @@ async def get_dashboard_metrics(
             "pending_reviews": 0,
             "reviewed_today": 0,
             "avg_review_time_seconds": 0,
-            "popular_edit_tags": []
+            "popular_edit_tags": [],
+            # Multi-LLM metrics (error fallback)
+            "gemini_quota_used_today": 0,
+            "gemini_quota_total": 32000,
+            "savings_today_usd": 0.0,
+            "model_distribution": {"gemini": 0, "gpt": 0}
         }
 
 
@@ -537,14 +753,18 @@ async def get_edit_taxonomy(
                 {"code": "CTA_DIRECT", "category": "CTA", "description": "Direct call to action"},
                 {"code": "REDUCED_CRINGE", "category": "STYLE", "description": "Reduce cringe factor"},
                 {"code": "INCREASED_FLIRT", "category": "STYLE", "description": "Increase flirtiness"},
-                {"code": "MORE_CASUAL", "category": "STYLE", "description": "Make more casual"},
                 {"code": "ENGLISH_SLANG", "category": "LANGUAGE", "description": "Add English slang"},
                 {"code": "TEXT_SPEAK", "category": "LANGUAGE", "description": "Add text speak"},
                 {"code": "STRUCT_SHORTEN", "category": "STRUCTURE", "description": "Shorten message"},
                 {"code": "STRUCT_BUBBLE", "category": "STRUCTURE", "description": "Split into bubbles"},
                 {"code": "CONTENT_EMOJI_ADD", "category": "CONTENT", "description": "Add emojis"},
+                {"code": "CONTENT_EMOJI_CUT", "category": "CONTENT", "description": "Remove excessive emojis"},
                 {"code": "CONTENT_QUESTION", "category": "CONTENT", "description": "Add question"},
-                {"code": "CONTENT_REWRITE", "category": "CONTENT", "description": "Complete rewrite"}
+                {"code": "CONTENT_QUESTION_CUT", "category": "CONTENT", "description": "Remove questions"},
+                {"code": "CONTENT_SENTENCE_ADD", "category": "CONTENT", "description": "Add sentences"},
+                {"code": "CONTENT_REWRITE", "category": "CONTENT", "description": "Complete rewrite"},
+                {"code": "TONE_LESS_IA", "category": "TONE", "description": "Make less AI-like"},
+                {"code": "TONE_ROMANTIC_UP", "category": "TONE", "description": "Increase romantic tone"}
             ]
 
         taxonomy = await db_manager.get_edit_taxonomy()
@@ -557,6 +777,550 @@ async def get_edit_taxonomy(
             {"code": "CTA_MEDIUM", "category": "CTA", "description": "Medium call to action"},
             {"code": "CTA_DIRECT", "category": "CTA", "description": "Direct call to action"}
         ]
+
+
+# ===== NEW MODEL MANAGEMENT ENDPOINTS =====
+
+@app.get("/api/models")
+@limiter.limit("30/minute")
+async def get_available_models(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get all available models by provider."""
+    try:
+        registry = get_model_registry()
+        models = registry.list_available_models()
+        
+        # Get detailed model information
+        detailed_models = {}
+        for provider, model_list in models.items():
+            detailed_models[provider] = {}
+            for model_name in model_list:
+                model_config = registry.get_model_config(provider, model_name)
+                if model_config:
+                    detailed_models[provider][model_name] = {
+                        'model_id': model_config.model_id,
+                        'description': model_config.description,
+                        'capabilities': model_config.capabilities,
+                        'context_window': model_config.context_window,
+                        'cost_per_million_input': model_config.cost_per_million_input,
+                        'cost_per_million_output': model_config.cost_per_million_output,
+                        'free_quota': model_config.free_quota,
+                        'rpm_limit': model_config.rpm_limit
+                    }
+        
+        return {
+            'models': detailed_models,
+            'total_providers': len(models),
+            'total_models': sum(len(model_list) for model_list in models.values())
+        }
+    except Exception as e:
+        logger.error(f"Error getting available models: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve models")
+
+
+@app.get("/api/models/profiles")
+@limiter.limit("30/minute")
+async def get_available_profiles(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get all available model profiles."""
+    try:
+        registry = get_model_registry()
+        profiles = registry.get_profile_details()
+        
+        return {
+            'profiles': profiles,
+            'total_profiles': len(profiles),
+            'default_profile': registry.get_default_profile()
+        }
+    except Exception as e:
+        logger.error(f"Error getting available profiles: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve profiles")
+
+
+@app.post("/api/models/profile")
+@limiter.limit("10/minute")
+async def switch_profile(
+    request: Request,
+    profile_request: ProfileSwitchRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Switch to a different model profile (hot-swap)."""
+    try:
+        registry = get_model_registry()
+        
+        # Validate profile exists
+        is_valid, error_msg = registry.validate_profile(profile_request.profile_name)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid profile '{profile_request.profile_name}': {error_msg}"
+            )
+        
+        # Get router instance and switch profile
+        router = get_dynamic_router()
+        success = router.switch_profile(profile_request.profile_name)
+        
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to switch to profile '{profile_request.profile_name}'"
+            )
+        
+        # Get updated router stats
+        stats = router.get_router_stats()
+        
+        return {
+            'success': True,
+            'message': f"Successfully switched to profile '{profile_request.profile_name}'",
+            'current_profile': stats['current_profile'],
+            'profile_details': stats['profile_details'],
+            'clients_status': stats['clients_status']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error switching profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to switch profile")
+
+
+@app.get("/api/models/current")
+@limiter.limit("60/minute")
+async def get_current_model_status(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get current model status and router statistics."""
+    try:
+        router = get_dynamic_router()
+        registry = get_model_registry()
+        
+        # Get router stats
+        router_stats = router.get_router_stats()
+        
+        # Get registry stats
+        registry_stats = registry.get_registry_stats()
+        
+        # Health check
+        health = router.health_check()
+        
+        return {
+            'router': router_stats,
+            'registry': registry_stats,
+            'health': health,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting model status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve model status")
+
+
+@app.post("/api/models/reload")
+@limiter.limit("5/minute")
+async def reload_model_registry(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Force reload the model registry configuration."""
+    try:
+        registry = get_model_registry()
+        router = get_dynamic_router()
+        
+        # Reload registry
+        registry_success = registry.reload_config()
+        
+        # Reload router (which will use updated registry)
+        router_success = router.reload_registry()
+        
+        if not registry_success:
+            raise HTTPException(status_code=500, detail="Failed to reload model registry")
+        
+        return {
+            'success': True,
+            'message': 'Model registry and router reloaded successfully',
+            'registry_reloaded': registry_success,
+            'router_reloaded': router_success,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reloading model registry: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reload model registry")
+
+
+@app.get("/api/models/cost-estimate")
+@limiter.limit("30/minute")
+async def get_cost_estimate(
+    request: Request,
+    profile: str = Query(..., description="Profile name to estimate cost for"),
+    input_tokens: int = Query(100, ge=1, le=100000, description="Number of input tokens"),
+    output_tokens: int = Query(100, ge=1, le=100000, description="Number of output tokens"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get cost estimate for a profile with given token usage."""
+    try:
+        registry = get_model_registry()
+        
+        # Validate profile
+        is_valid, error_msg = registry.validate_profile(profile)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid profile '{profile}': {error_msg}"
+            )
+        
+        # Calculate cost estimate
+        cost = registry.get_cost_estimate(profile, input_tokens, output_tokens)
+        
+        # Get profile details for context
+        profile_config = registry.get_profile(profile)
+        
+        return {
+            'profile': profile,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'estimated_cost_usd': cost,
+            'profile_details': {
+                'name': profile_config.name,
+                'llm1': f"{profile_config.llm1_provider}/{profile_config.llm1_model}",
+                'llm2': f"{profile_config.llm2_provider}/{profile_config.llm2_model}",
+                'estimated_cost_per_1k_messages': profile_config.estimated_cost_per_1k_messages
+            } if profile_config else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating cost estimate: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate cost estimate")
+
+
+# ===== NEW DASHBOARD HELPER ENDPOINTS =====
+
+@app.get("/api/dashboard/cost-tracking")
+@limiter.limit("60/minute")
+async def get_cost_tracking(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get comprehensive cost tracking data for the dashboard."""
+    try:
+        registry = get_model_registry()
+        router = get_dynamic_router()
+        
+        # Get current profile
+        current_profile = router.current_profile
+        
+        # Calculate today's costs
+        async with db_manager._pool.acquire() as conn:
+            # Get today's interaction counts and costs
+            today_stats = await conn.fetchrow(
+                """
+                SELECT 
+                    COUNT(*) as total_interactions,
+                    SUM(COALESCE(llm1_cost_usd, 0)) as llm1_total_cost,
+                    SUM(COALESCE(llm2_cost_usd, 0)) as llm2_total_cost,
+                    COUNT(DISTINCT user_id) as unique_users
+                FROM interactions 
+                WHERE DATE(created_at) = CURRENT_DATE
+                """
+            )
+            
+            # Get model distribution with costs
+            model_costs = await conn.fetch(
+                """
+                SELECT 
+                    llm1_model,
+                    llm2_model,
+                    COUNT(*) as count,
+                    SUM(COALESCE(llm1_cost_usd, 0) + COALESCE(llm2_cost_usd, 0)) as total_cost
+                FROM interactions 
+                WHERE DATE(created_at) = CURRENT_DATE
+                GROUP BY llm1_model, llm2_model
+                ORDER BY count DESC
+                """
+            )
+        
+        # Calculate projections for current profile
+        messages_today = today_stats['total_interactions'] or 0
+        cost_estimate = registry.estimate_conversation_cost(
+            messages=messages_today,
+            profile=current_profile
+        )
+        
+        # Get cheapest available model
+        cheapest = registry.get_cheapest_available_model(
+            min_capabilities=['text'],
+            consider_quota=True,
+            consider_cache=True
+        )
+        
+        return {
+            'current_profile': current_profile,
+            'today': {
+                'total_interactions': messages_today,
+                'unique_users': today_stats['unique_users'] or 0,
+                'actual_cost': float((today_stats['llm1_total_cost'] or 0) + (today_stats['llm2_total_cost'] or 0)),
+                'estimated_cost': cost_estimate.get('total_cost', 0),
+                'free_tier_usage': cost_estimate.get('free_tier_messages', 0),
+                'paid_messages': cost_estimate.get('paid_messages', 0)
+            },
+            'projections': {
+                'daily_cost': cost_estimate.get('daily_cost', 0),
+                'monthly_cost': cost_estimate.get('monthly_projection', 0),
+                'cost_per_message': cost_estimate.get('cost_per_message', 0)
+            },
+            'savings': {
+                'vs_openai_only': cost_estimate.get('savings_vs_openai', 0),
+                'savings_percentage': cost_estimate.get('savings_percentage', 0),
+                'cache_savings': cost_estimate.get('cache_savings', 0)
+            },
+            'model_breakdown': [
+                {
+                    'llm1': row['llm1_model'],
+                    'llm2': row['llm2_model'],
+                    'count': row['count'],
+                    'cost': float(row['total_cost'] or 0)
+                }
+                for row in model_costs
+            ],
+            'recommendations': {
+                'cheapest_model': cheapest,
+                'optimal_profile': 'smart_economic' if messages_today > 100 else 'free_tier'
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cost tracking data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve cost tracking data")
+
+
+@app.get("/api/dashboard/profile-comparison")
+@limiter.limit("30/minute")
+async def get_profile_comparison(
+    request: Request,
+    messages: int = Query(1000, ge=1, le=1000000, description="Number of messages to estimate"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Compare cost estimates across all profiles."""
+    try:
+        registry = get_model_registry()
+        profiles = registry.list_available_profiles()
+        
+        comparisons = []
+        for profile_name in profiles:
+            profile_config = registry.get_profile(profile_name)
+            if profile_config:
+                estimate = registry.estimate_conversation_cost(
+                    messages=messages,
+                    profile=profile_name
+                )
+                
+                comparisons.append({
+                    'profile': profile_name,
+                    'name': profile_config.name,
+                    'description': profile_config.description,
+                    'llm1': f"{profile_config.llm1_provider}/{profile_config.llm1_model}",
+                    'llm2': f"{profile_config.llm2_provider}/{profile_config.llm2_model}",
+                    'use_case': profile_config.use_case,
+                    'cost_estimate': {
+                        'total': estimate.get('total_cost', 0),
+                        'per_message': estimate.get('cost_per_message', 0),
+                        'monthly': estimate.get('monthly_projection', 0),
+                        'free_tier_usage': estimate.get('free_tier_messages', 0),
+                        'cache_savings': estimate.get('cache_savings', 0)
+                    }
+                })
+        
+        # Sort by total cost
+        comparisons.sort(key=lambda x: x['cost_estimate']['total'])
+        
+        return {
+            'messages': messages,
+            'profiles': comparisons,
+            'cheapest': comparisons[0] if comparisons else None,
+            'most_expensive': comparisons[-1] if comparisons else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error comparing profiles: {e}")
+        raise HTTPException(status_code=500, detail="Failed to compare profiles")
+
+
+@app.post("/users/{user_id}/customer-status")
+@limiter.limit("10/minute")
+async def update_customer_status(
+    request: Request,
+    user_id: str,
+    status_request: CustomerStatusUpdateRequest,
+    authorization: str = Header(..., description="Bearer token for authentication")
+):
+    """Update customer status for a specific user"""
+    validate_bearer_token(authorization)
+    
+    try:
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, status not updated"}
+        
+        # Get the latest interaction for this user to update
+        async with db_manager._pool.acquire() as conn:
+            # Get the most recent interaction for this user
+            latest_interaction = await conn.fetchrow(
+                """
+                SELECT id, customer_status
+                FROM interactions 
+                WHERE user_id = $1 
+                ORDER BY created_at DESC 
+                LIMIT 1
+                """,
+                user_id
+            )
+            
+            if not latest_interaction:
+                raise HTTPException(status_code=404, detail="No interactions found for this user")
+            
+            interaction_id = latest_interaction['id']
+            current_status = latest_interaction['customer_status']
+            
+            # Use the database function to update status
+            new_status = await conn.fetchval(
+                """
+                SELECT update_customer_status($1, $2, NULL, $3, $4)
+                """,
+                user_id,
+                interaction_id,
+                status_request.customer_status == 'CUSTOMER',  # converted boolean
+                status_request.ltv_amount
+            )
+            
+            # Also update all interactions for this user to maintain consistency
+            await conn.execute(
+                """
+                UPDATE interactions 
+                SET customer_status = $1,
+                    ltv_usd = CASE 
+                        WHEN $1 = 'CUSTOMER' THEN COALESCE(ltv_usd, 0) + $2
+                        ELSE ltv_usd 
+                    END
+                WHERE user_id = $3
+                """,
+                status_request.customer_status,
+                status_request.ltv_amount,
+                user_id
+            )
+            
+            # Log the manual status change
+            await conn.execute(
+                """
+                INSERT INTO customer_status_transitions (
+                    user_id, interaction_id, previous_status, new_status, reason, automated
+                ) VALUES ($1, $2, $3, $4, $5, FALSE)
+                """,
+                user_id,
+                interaction_id,
+                current_status,
+                status_request.customer_status,
+                status_request.reason
+            )
+        
+        logger.info(f"Customer status updated for user {user_id}: {current_status} → {status_request.customer_status}")
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "previous_status": current_status,
+            "new_status": status_request.customer_status,
+            "ltv_added": status_request.ltv_amount,
+            "reason": status_request.reason
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating customer status for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update customer status")
+
+
+@app.get("/users/{user_id}/customer-status")
+@limiter.limit("30/minute")
+async def get_customer_status(
+    request: Request,
+    user_id: str,
+    authorization: str = Header(..., description="Bearer token for authentication")
+):
+    """Get current customer status for a specific user"""
+    validate_bearer_token(authorization)
+    
+    try:
+        if database_mode == "skip":
+            return {"customer_status": "PROSPECT", "ltv_usd": 0.0, "message": "Database mode is skip"}
+        
+        async with db_manager._pool.acquire() as conn:
+            user_status = await conn.fetchrow(
+                """
+                SELECT 
+                    customer_status,
+                    ltv_usd,
+                    cta_sent_count,
+                    last_cta_sent_at,
+                    conversion_date,
+                    created_at as last_interaction
+                FROM interactions
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                user_id
+            )
+            
+            if not user_status:
+                return {
+                    "customer_status": "PROSPECT",
+                    "ltv_usd": 0.0,
+                    "cta_sent_count": 0,
+                    "message": "No interactions found for this user"
+                }
+            
+            # Get status transition history
+            transitions = await conn.fetch(
+                """
+                SELECT previous_status, new_status, reason, automated, created_at
+                FROM customer_status_transitions
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT 5
+                """,
+                user_id
+            )
+            
+            return {
+                "customer_status": user_status['customer_status'],
+                "ltv_usd": float(user_status['ltv_usd'] or 0),
+                "cta_sent_count": user_status['cta_sent_count'] or 0,
+                "last_cta_sent_at": user_status['last_cta_sent_at'].isoformat() if user_status['last_cta_sent_at'] else None,
+                "conversion_date": user_status['conversion_date'].isoformat() if user_status['conversion_date'] else None,
+                "last_interaction": user_status['last_interaction'].isoformat() if user_status['last_interaction'] else None,
+                "status_history": [
+                    {
+                        "previous_status": t['previous_status'],
+                        "new_status": t['new_status'],
+                        "reason": t['reason'],
+                        "automated": t['automated'],
+                        "date": t['created_at'].isoformat()
+                    } for t in transitions
+                ]
+            }
+        
+    except Exception as e:
+        logger.error(f"Error getting customer status for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get customer status")
 
 
 if __name__ == "__main__":

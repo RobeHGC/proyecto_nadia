@@ -7,24 +7,29 @@ class HITLDashboard {
         this.selectedTags = [];
         this.qualityScore = 3;
         this.editTaxonomy = [];
+        this.starHandlers = new Map(); // Store star event handlers for cleanup
+        this.globalStarListenerAdded = false; // Track if we've added the global listener
         
         // NUEVO: CTA functionality
         this.ctaInserted = null;
         this.ctaTemplates = {
             soft: [
-                "btw i have some pics i can't send here 🙈",
-                "wish we could chat somewhere more private...",
-                "i'm shy about sending certain things here 😳"
+                "btw i have some pics i can't send here 🙈 check my profile",
+                "wish we could chat somewhere more private... link in bio",
+                "i'm shy about sending certain things here 😳 fanvue.com/nadiagarc",
+                "there's so much more i want to show you 😘 find me on fanvue"
             ],
             medium: [
-                "i have exclusive content elsewhere 👀",
-                "my VIP fans get to see way more hehe",
-                "there's stuff i only show in private 🤫"
+                "i have exclusive content elsewhere 👀 fanvue.com/nadiagarc",
+                "my VIP fans get to see way more hehe → fanvue.com/nadiagarc",
+                "there's stuff i only show in private 🤫 link: fanvue.com/nadiagarc",
+                "i have a special place for my naughtiest content 😏 check fanvue.com/nadiagarc"
             ],
             direct: [
-                "check out my Fanvue for more content 💕",
-                "link in bio for exclusive stuff 🔥",
-                "follow me for content i can't post here 🔞"
+                "check out my Fanvue for more content 💕 https://www.fanvue.com/nadiagarc",
+                "link in bio for exclusive stuff 🔥 https://www.fanvue.com/nadiagarc",
+                "follow me for content i can't post here 🔞 https://www.fanvue.com/nadiagarc",
+                "you can find my spicy content on fanvue 😈 https://www.fanvue.com/nadiagarc"
             ]
         };
         
@@ -43,6 +48,7 @@ class HITLDashboard {
         await this.loadMetrics();
         await this.loadReviews();
         this.setupEventListeners();
+        // Don't setup stars on init - wait until a review is selected
         
         // Auto-refresh every 30 seconds
         setInterval(() => {
@@ -158,6 +164,12 @@ class HITLDashboard {
         }
     }
     
+    getScoreClass(score) {
+        if (score >= 0.7) return 'score-high';
+        if (score >= 0.4) return 'score-medium';
+        return 'score-low';
+    }
+    
     async selectReview(reviewId) {
         // Update UI selection
         document.querySelectorAll('.review-item').forEach(item => {
@@ -190,28 +202,97 @@ class HITLDashboard {
         this.updateTagButtons();
         this.updateQualityStars();
         
-        // Setup star click handlers
+        // Load customer status for this user
+        this.loadCustomerStatus();
+        
+        // Setup star click handlers with a small delay to ensure DOM is ready
         setTimeout(() => {
-            document.querySelectorAll('.star').forEach(star => {
-                star.onclick = () => {
-                    this.qualityScore = parseInt(star.dataset.rating);
-                    this.updateQualityStars();
-                };
-            });
-        }, 100);
+            this.setupQualityStars();
+        }, 0);
     }
     
     renderBubbles() {
         const container = document.getElementById('bubbles-container');
         const bubbles = this.currentReview.llm2_bubbles || [];
         
-        container.innerHTML = bubbles.map((bubble, index) => `
-            <textarea 
-                class="bubble-editor" 
-                data-index="${index}"
-                placeholder="Edit message bubble..."
-            >${bubble}</textarea>
-        `).join('');
+        // Show LLM1 raw response first
+        let html = '';
+        if (this.currentReview.llm1_raw_response) {
+            html += `
+                <div class="llm-section">
+                    <h4 class="llm-header">
+                        <span class="llm-badge llm1">LLM1 (Creative)</span>
+                        <span class="model-name">${this.currentReview.llm1_model || 'Unknown'}</span>
+                    </h4>
+                    <div class="llm1-response">${this.currentReview.llm1_raw_response}</div>
+                </div>
+            `;
+        }
+        
+        // Show LLM2 bubbles (editable)
+        html += `
+            <div class="llm-section">
+                <h4 class="llm-header">
+                    <span class="llm-badge llm2">LLM2 (Refined)</span>
+                    <span class="model-name">${this.currentReview.llm2_model || 'Unknown'}</span>
+                </h4>
+                <div class="bubbles-editable">
+                    ${bubbles.map((bubble, index) => `
+                        <div class="bubble-container">
+                            <textarea 
+                                class="bubble-editor" 
+                                data-index="${index}"
+                                placeholder="Edit message bubble..."
+                            >${bubble}</textarea>
+                            <button class="btn-delete-bubble" onclick="dashboard.deleteBubble(${index})" title="Delete bubble">
+                                🗑️
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        // Add Constitution analysis section
+        if (this.currentReview.constitution_analysis) {
+            const analysis = this.currentReview.constitution_analysis;
+            html += `
+                <div class="llm-section constitution-section">
+                    <h4 class="llm-header">
+                        <span class="llm-badge constitution">🛡️ Constitution Analysis</span>
+                        <span class="risk-badge ${this.getRiskClass(analysis.recommendation)}">
+                            ${analysis.recommendation.toUpperCase()}
+                        </span>
+                    </h4>
+                    <div class="constitution-content">
+                        <div class="constitution-score">
+                            <strong>Risk Score:</strong> 
+                            <span class="score-value ${this.getScoreClass(analysis.risk_score)}">
+                                ${(analysis.risk_score * 100).toFixed(1)}%
+                            </span>
+                        </div>
+                        ${analysis.flags && analysis.flags.length > 0 ? `
+                            <div class="constitution-flags">
+                                <strong>Flags:</strong>
+                                <div class="flags-list">
+                                    ${analysis.flags.map(flag => `<span class="flag-item">${flag}</span>`).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${analysis.violations && analysis.violations.length > 0 ? `
+                            <div class="constitution-violations">
+                                <strong>Violations:</strong>
+                                <ul class="violations-list">
+                                    ${analysis.violations.map(violation => `<li>${violation}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
     }
     
     renderTagButtons() {
@@ -230,7 +311,20 @@ class HITLDashboard {
     }
     
     setupEventListeners() {
-        // No event listeners needed here - stars are handled in renderEditor
+        // Simple event delegation for star clicks
+        if (!this.globalStarListenerAdded) {
+            document.addEventListener('click', (e) => {
+                if (e.target.classList.contains('star') && e.target.closest('#quality-stars')) {
+                    const rating = parseInt(e.target.dataset.rating);
+                    if (rating && this.currentReview) {
+                        this.qualityScore = rating;
+                        this.updateQualityStars();
+                        console.log(`Quality score set to: ${rating}`);
+                    }
+                }
+            });
+            this.globalStarListenerAdded = true;
+        }
     }
     
     toggleTag(tagCode) {
@@ -250,10 +344,19 @@ class HITLDashboard {
     }
     
     updateQualityStars() {
+        console.log('Updating quality stars, current score:', this.qualityScore);
         document.querySelectorAll('.star').forEach(star => {
             const rating = parseInt(star.dataset.rating);
-            star.classList.toggle('selected', rating <= this.qualityScore);
+            const isSelected = rating <= this.qualityScore;
+            star.classList.toggle('selected', isSelected);
+            console.log(`Star ${rating}: ${isSelected ? 'selected' : 'unselected'}`);
         });
+    }
+    
+    setupQualityStars() {
+        // Stars are now handled by global event delegation
+        // Just update the visual state
+        this.updateQualityStars();
     }
     
     getFinalBubbles() {
@@ -484,6 +587,164 @@ class HITLDashboard {
             return '<span class="cache-warning">⚠️ Low Cache</span>';
         }
         return '';
+    }
+    
+    deleteBubble(index) {
+        if (!this.currentReview) return;
+        
+        // Get current bubble values from DOM
+        const textareas = document.querySelectorAll('.bubble-editor');
+        const currentValues = Array.from(textareas).map(ta => ta.value);
+        
+        if (currentValues.length <= 1) {
+            alert('Cannot delete the last bubble. At least one bubble is required.');
+            return;
+        }
+        
+        if (confirm('Are you sure you want to delete this bubble?')) {
+            // Remove the bubble from the array
+            currentValues.splice(index, 1);
+            
+            // Update the review object
+            this.currentReview.llm2_bubbles = currentValues;
+            
+            // Re-render only the bubbles section
+            this.renderBubbles();
+        }
+    }
+    
+    deleteCTA() {
+        const ctaBubbles = document.querySelectorAll('.cta-bubble');
+        if (ctaBubbles.length === 0) {
+            alert('No CTA bubbles to delete.');
+            return;
+        }
+        
+        if (confirm('Are you sure you want to delete all CTA bubbles?')) {
+            ctaBubbles.forEach(bubble => bubble.remove());
+            this.ctaInserted = null;
+            
+            // Remove CTA tags from selected tags
+            const ctaTags = ['CTA_SOFT', 'CTA_MEDIUM', 'CTA_DIRECT'];
+            this.selectedTags = this.selectedTags.filter(tag => !ctaTags.includes(tag));
+            this.updateTagButtons();
+        }
+    }
+    
+    async loadCustomerStatus() {
+        if (!this.currentReview) return;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/users/${this.currentReview.user_id}/customer-status`, {
+                headers: this.getAuthHeaders()
+            });
+            
+            if (response.ok) {
+                const statusData = await response.json();
+                this.updateCustomerStatusDisplay(statusData);
+            } else {
+                // Default to PROSPECT if no data found
+                this.updateCustomerStatusDisplay({
+                    customer_status: 'PROSPECT',
+                    ltv_usd: 0.0
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load customer status:', error);
+            this.updateCustomerStatusDisplay({
+                customer_status: 'PROSPECT',
+                ltv_usd: 0.0
+            });
+        }
+    }
+    
+    updateCustomerStatusDisplay(statusData) {
+        // Update dropdown selection
+        const dropdown = document.getElementById('customer-status-select');
+        if (dropdown) {
+            dropdown.value = statusData.customer_status || 'PROSPECT';
+        }
+        
+        // Update current status display
+        const statusBadge = document.querySelector('.status-badge');
+        const ltvDisplay = document.querySelector('.ltv-display');
+        
+        if (statusBadge) {
+            const status = statusData.customer_status || 'PROSPECT';
+            statusBadge.textContent = `Current: ${status}`;
+            statusBadge.className = `status-badge ${status}`;
+        }
+        
+        if (ltvDisplay) {
+            const ltv = statusData.ltv_usd || 0;
+            ltvDisplay.textContent = `LTV: $${ltv.toFixed(2)}`;
+        }
+        
+        // Clear LTV input
+        const ltvInput = document.getElementById('ltv-input');
+        if (ltvInput) {
+            ltvInput.value = '';
+        }
+    }
+    
+    async updateCustomerStatus() {
+        if (!this.currentReview) {
+            alert('No review selected');
+            return;
+        }
+        
+        const dropdown = document.getElementById('customer-status-select');
+        const ltvInput = document.getElementById('ltv-input');
+        
+        if (!dropdown) {
+            alert('Customer status selector not found');
+            return;
+        }
+        
+        const newStatus = dropdown.value;
+        const ltvAmount = parseFloat(ltvInput.value) || 0;
+        const reason = prompt('Reason for status change (optional):', 'Manual update from dashboard') || 'Manual update from dashboard';
+        
+        try {
+            const response = await fetch(`${this.apiBase}/users/${this.currentReview.user_id}/customer-status`, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+                body: JSON.stringify({
+                    user_id: this.currentReview.user_id,
+                    customer_status: newStatus,
+                    reason: reason,
+                    ltv_amount: ltvAmount
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                
+                // Update display with new status
+                this.updateCustomerStatusDisplay({
+                    customer_status: result.new_status,
+                    ltv_usd: (result.ltv_added || 0)
+                });
+                
+                // Show success message
+                let message = `✅ Customer status updated!\n${result.previous_status} → ${result.new_status}`;
+                if (result.ltv_added > 0) {
+                    message += `\nLTV added: $${result.ltv_added.toFixed(2)}`;
+                }
+                
+                alert(message);
+                
+                // Refresh reviews to show any updates
+                this.loadReviews();
+                
+            } else {
+                const error = await response.json();
+                alert(`Failed to update customer status: ${error.detail}`);
+            }
+        } catch (error) {
+            console.error('Failed to update customer status:', error);
+            alert('Failed to update customer status. Please try again.');
+        }
     }
 }
 

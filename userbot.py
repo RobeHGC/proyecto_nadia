@@ -16,6 +16,7 @@ from database.models import DatabaseManager  # NUEVO: Import DatabaseManager
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
+from utils.typing_simulator import TypingSimulator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class UserBot:
         # Internal components
         self.memory = UserMemoryManager(config.redis_url)
         self.llm = OpenAIClient(config.openai_api_key, config.openai_model)
-        self.supervisor = SupervisorAgent(self.llm, self.memory)
+        self.supervisor = SupervisorAgent(self.llm, self.memory, config)
         self.cognitive_controller = CognitiveController()
         self.constitution = Constitution()  # NUEVO: Initialize Constitution
         self.db_manager = DatabaseManager(config.database_url)  # NUEVO: Initialize DatabaseManager
@@ -47,6 +48,10 @@ class UserBot:
         # HITL Review Queue
         self.review_queue_key = "nadia_review_queue"  # Sorted set for priority
         self.review_items_key = "nadia_review_items"  # Hash for ReviewItem data
+        self.approved_messages_key = "nadia_approved_messages"  # List for approved messages to send
+        
+        # Typing simulation
+        self.typing_simulator = None  # Will be initialized after client start
 
     # ────────────────────────────────
     # Redis Helpers
@@ -63,9 +68,11 @@ class UserBot:
         """Starts the bot and WAL worker."""
         await self.client.start(phone=self.config.phone_number)
         await self.db_manager.initialize()  # NUEVO: Initialize database
+        self.typing_simulator = TypingSimulator(self.client)  # Initialize typing simulator
         logger.info("Bot started successfully")
 
         wal_worker = asyncio.create_task(self._process_wal_queue())
+        approved_worker = asyncio.create_task(self._process_approved_messages())
 
         @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
         async def _(event):  # noqa: D401,  WPS122
@@ -75,8 +82,10 @@ class UserBot:
             await self.client.run_until_disconnected()
         finally:
             wal_worker.cancel()
+            approved_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await wal_worker
+                await approved_worker
             await self.memory.close()
             await self.db_manager.close()  # NUEVO: Close database
 
@@ -129,6 +138,86 @@ class UserBot:
             raise
         finally:
             await self.memory.close()
+
+    # ────────────────────────────────
+    # Approved Messages Worker
+    # ────────────────────────────────
+    async def _process_approved_messages(self):
+        """Continuously processes approved messages from dashboard for sending."""
+        logger.info("Starting approved messages processor")
+        r = await self._get_redis()
+
+        try:
+            while True:
+                # Check for approved messages to send
+                _, raw = await r.brpop(self.approved_messages_key, timeout=1) or (None, None)
+                if not raw:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    data = json.loads(raw)
+                    review_id = data["review_id"]
+                    bubbles = data["bubbles"]
+                    
+                    # Get user info from review data
+                    # First try to get from current review items
+                    review_data_json = await r.hget(self.review_items_key, review_id)
+                    if review_data_json:
+                        review_data = json.loads(review_data_json)
+                        user_id = review_data["user_id"]
+                        
+                        # Send with realistic typing cadence
+                        if self.typing_simulator:
+                            # Get previous user message for reading time simulation
+                            previous_message = review_data.get("user_message", "")
+                            await self.typing_simulator.simulate_human_cadence(
+                                int(user_id), bubbles, previous_message
+                            )
+                        else:
+                            # Fallback: Send each bubble as a separate message
+                            for bubble in bubbles:
+                                await self.client.send_message(int(user_id), bubble)
+                                await asyncio.sleep(0.5)  # Small delay between bubbles
+                        
+                        logger.info("Approved message sent to user %s: %d bubbles", user_id, len(bubbles))
+                    else:
+                        # Try to get user info from database if not in Redis
+                        database_mode = getattr(self.config, 'database_mode', 'normal')
+                        if database_mode != "skip":
+                            try:
+                                review = await self.db_manager.get_interaction(review_id)
+                                if review:
+                                    user_id = review["user_id"]
+                                    # Send with realistic typing cadence
+                                    if self.typing_simulator:
+                                        previous_message = review.get("user_message", "")
+                                        await self.typing_simulator.simulate_human_cadence(
+                                            int(user_id), bubbles, previous_message
+                                        )
+                                    else:
+                                        # Fallback: Send each bubble as a separate message
+                                        for bubble in bubbles:
+                                            await self.client.send_message(int(user_id), bubble)
+                                            await asyncio.sleep(0.5)  # Small delay between bubbles
+                                    
+                                    logger.info("Approved message sent to user %s: %d bubbles", user_id, len(bubbles))
+                                else:
+                                    logger.error("Review %s not found in database", review_id)
+                            except Exception as e:
+                                logger.error("Error getting review from database: %s", e)
+                        else:
+                            logger.error("Review %s not found and database mode is skip", review_id)
+                
+                except Exception as e:
+                    logger.error("Error processing approved message: %s", e)
+                    logger.error("Message data: %s", raw)
+
+        except asyncio.CancelledError:
+            logger.info("Approved messages worker stopped")
+            raise
+        except Exception as e:
+            logger.error("Error in approved messages worker: %s", e)
 
     # ────────────────────────────────
     # Message Processing - HITL Mode
@@ -187,7 +276,12 @@ class UserBot:
                         "violations": review_item.ai_suggestion.constitution_analysis.violations
                     },
                     "tokens_used": review_item.ai_suggestion.tokens_used,
-                    "generation_time": review_item.ai_suggestion.generation_time
+                    "generation_time": review_item.ai_suggestion.generation_time,
+                    # Multi-LLM tracking fields
+                    "llm1_model": review_item.ai_suggestion.llm1_model,
+                    "llm2_model": review_item.ai_suggestion.llm2_model,
+                    "llm1_cost": review_item.ai_suggestion.llm1_cost,
+                    "llm2_cost": review_item.ai_suggestion.llm2_cost
                 },
                 "priority": review_item.priority,
                 "timestamp": review_item.timestamp.isoformat(),
@@ -227,10 +321,18 @@ class UserBot:
             review_data = json.loads(review_data_json)
             chat_id = review_data["conversation_context"]["chat_id"]
 
-            # Send each bubble as separate message
-            for bubble in approved_bubbles:
-                if bubble.strip():  # Skip empty bubbles
-                    await self.client.send_message(chat_id, bubble.strip())
+            # Send with realistic typing cadence
+            non_empty_bubbles = [bubble.strip() for bubble in approved_bubbles if bubble.strip()]
+            if self.typing_simulator:
+                # Get user message for reading time simulation
+                user_message = review_data.get("user_message", "")
+                await self.typing_simulator.simulate_human_cadence(
+                    chat_id, non_empty_bubbles, user_message
+                )
+            else:
+                # Fallback: Send each bubble as separate message
+                for bubble in non_empty_bubbles:
+                    await self.client.send_message(chat_id, bubble)
                     await asyncio.sleep(0.5)  # Small delay between bubbles
 
             # Clean up from queue
