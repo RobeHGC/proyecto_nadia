@@ -594,6 +594,45 @@ async def reject_review(review_id: str, request: ReviewRejectionRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.post("/reviews/{review_id}/cancel")
+async def cancel_review(review_id: str, request: ReviewRejectionRequest):
+    """Cancel a review without saving any edits to database.
+    
+    This endpoint properly handles review cancellation by:
+    1. Returning the review to pending state in database
+    2. Clearing reviewer assignment
+    3. NOT saving any edited content
+    4. Keeping the review in Redis queue for other reviewers
+    
+    This prevents data contamination from cancelled reviews.
+    """
+    try:
+        # Check if database mode is skip
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        
+        if database_mode != "skip":
+            # Cancel the review in database (returns to pending state)
+            cancelled = await db_manager.cancel_review(review_id, request.reviewer_notes)
+            
+            if not cancelled:
+                raise HTTPException(status_code=404, detail="Review not found or not in reviewing state")
+        
+        # Important: Do NOT remove from Redis queue - leave it for other reviewers
+        # This is the key difference from approve/reject which remove the item
+        
+        return {
+            "status": "cancelled", 
+            "review_id": review_id,
+            "message": "Review cancelled successfully. Returned to pending state for other reviewers."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rejecting review {review_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 async def get_model_distribution() -> dict:
     """Get model usage distribution for today."""
     try:
@@ -1160,12 +1199,12 @@ async def update_customer_status(
     request: Request,
     user_id: str,
     status_request: CustomerStatusUpdateRequest,
-    authorization: str = Header(..., description="Bearer token for authentication")
+    api_key: str = Depends(verify_api_key)
 ):
     """Update customer status for a specific user"""
-    validate_bearer_token(authorization)
     
     try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
         if database_mode == "skip":
             return {"status": "success", "message": "Database mode is skip, status not updated"}
         
@@ -1189,27 +1228,20 @@ async def update_customer_status(
             interaction_id = latest_interaction['id']
             current_status = latest_interaction['customer_status']
             
-            # Use the database function to update status
-            new_status = await conn.fetchval(
-                """
-                SELECT update_customer_status($1, $2, NULL, $3, $4)
-                """,
-                user_id,
-                interaction_id,
-                status_request.customer_status == 'CUSTOMER',  # converted boolean
-                status_request.ltv_amount
-            )
+            # Simple direct update without using the complex function
+            # The function is designed for automated CTA responses, not manual updates
+            new_status = status_request.customer_status
             
             # Also update all interactions for this user to maintain consistency
             await conn.execute(
                 """
                 UPDATE interactions 
-                SET customer_status = $1,
+                SET customer_status = $1::VARCHAR(20),
                     ltv_usd = CASE 
-                        WHEN $1 = 'CUSTOMER' THEN COALESCE(ltv_usd, 0) + $2
+                        WHEN $1::VARCHAR(20) = 'CUSTOMER' THEN COALESCE(ltv_usd, 0) + $2::DECIMAL
                         ELSE ltv_usd 
                     END
-                WHERE user_id = $3
+                WHERE user_id = $3::TEXT
                 """,
                 status_request.customer_status,
                 status_request.ltv_amount,
@@ -1253,12 +1285,12 @@ async def update_customer_status(
 async def get_customer_status(
     request: Request,
     user_id: str,
-    authorization: str = Header(..., description="Bearer token for authentication")
+    api_key: str = Depends(verify_api_key)
 ):
     """Get current customer status for a specific user"""
-    validate_bearer_token(authorization)
     
     try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
         if database_mode == "skip":
             return {"customer_status": "PROSPECT", "ltv_usd": 0.0, "message": "Database mode is skip"}
         

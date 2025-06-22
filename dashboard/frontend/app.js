@@ -375,7 +375,13 @@ class HITLDashboard {
             return;
         }
         
-        const reviewerNotes = prompt('Optional reviewer notes (for training data analysis):') || '';
+        const reviewerNotes = prompt('Optional reviewer notes (for training data analysis):');
+        
+        // Check if user cancelled the prompt
+        if (reviewerNotes === null) {
+            console.log('User cancelled review approval');
+            return; // Exit without saving anything
+        }
         
         try {
             // NUEVO: Prepare approval data with CTA information
@@ -383,7 +389,7 @@ class HITLDashboard {
                 final_bubbles: finalBubbles,
                 edit_tags: this.selectedTags,
                 quality_score: this.qualityScore,
-                reviewer_notes: reviewerNotes
+                reviewer_notes: reviewerNotes || ''
             };
             
             // NUEVO: Add CTA metadata if CTA was inserted
@@ -423,14 +429,20 @@ class HITLDashboard {
     async rejectReview() {
         if (!this.currentReview) return;
         
-        const reviewerNotes = prompt('Reason for rejection:') || '';
+        const reviewerNotes = prompt('Reason for rejection:');
+        
+        // Check if user cancelled the prompt
+        if (reviewerNotes === null) {
+            console.log('User cancelled review rejection');
+            return; // Exit without saving anything
+        }
         
         try {
             const response = await fetch(`${this.apiBase}/reviews/${this.currentReview.id}/reject`, {
                 method: 'POST',
                 headers: this.getAuthHeaders(),
                 body: JSON.stringify({
-                    reviewer_notes: reviewerNotes
+                    reviewer_notes: reviewerNotes || ''
                 })
             });
             
@@ -449,6 +461,46 @@ class HITLDashboard {
         }
     }
     
+    async cancelReview() {
+        if (!this.currentReview) return;
+        
+        // Confirm cancellation to prevent accidental clicks
+        const confirmed = confirm('Are you sure you want to cancel this review?\n\nThis will return the review to the pending queue without saving any changes.');
+        if (!confirmed) return;
+        
+        const reviewerNotes = prompt('Optional reason for cancellation (for logging):');
+        
+        // Check if user cancelled the prompt
+        if (reviewerNotes === null) {
+            console.log('User cancelled cancellation reason prompt');
+            return; // Exit without cancelling the review
+        }
+        
+        try {
+            const response = await fetch(`${this.apiBase}/reviews/${this.currentReview.id}/cancel`, {
+                method: 'POST',
+                headers: this.getAuthHeaders(),
+                body: JSON.stringify({
+                    reviewer_notes: reviewerNotes || ''
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                alert('🚫 Review cancelled successfully.\n\nThe review has been returned to the pending queue for other reviewers.');
+                this.loadReviews();
+                this.loadMetrics();
+                this.clearEditor();
+            } else {
+                const error = await response.json();
+                alert(`Failed to cancel: ${error.detail}`);
+            }
+        } catch (error) {
+            console.error('Failed to cancel review:', error);
+            alert('Failed to cancel review. Please try again.');
+        }
+    }
+    
     // NUEVO: CTA Methods
     insertCTA(type) {
         if (!this.currentReview) return;
@@ -463,7 +515,10 @@ class HITLDashboard {
         } else {
             const options = templates.map((t, i) => `${i + 1}. ${t}`).join('\n');
             const choice = prompt(`Select CTA ${type.toUpperCase()} template:\n\n${options}\n\nEnter number (1-${templates.length}):`);
-            if (!choice) return; // User cancelled
+            if (choice === null || choice === '') {
+                console.log('User cancelled CTA template selection');
+                return; // User cancelled
+            }
             const index = parseInt(choice) - 1;
             if (index >= 0 && index < templates.length) {
                 selectedTemplate = templates[index];
@@ -703,7 +758,13 @@ class HITLDashboard {
         
         const newStatus = dropdown.value;
         const ltvAmount = parseFloat(ltvInput.value) || 0;
-        const reason = prompt('Reason for status change (optional):', 'Manual update from dashboard') || 'Manual update from dashboard';
+        const reason = prompt('Reason for status change (optional):', 'Manual update from dashboard');
+        
+        // Check if user cancelled the prompt
+        if (reason === null) {
+            console.log('User cancelled customer status update');
+            return; // Exit without saving anything
+        }
         
         try {
             const response = await fetch(`${this.apiBase}/users/${this.currentReview.user_id}/customer-status`, {
@@ -712,7 +773,7 @@ class HITLDashboard {
                 body: JSON.stringify({
                     user_id: this.currentReview.user_id,
                     customer_status: newStatus,
-                    reason: reason,
+                    reason: reason || 'Manual update from dashboard',
                     ltv_amount: ltvAmount
                 })
             });

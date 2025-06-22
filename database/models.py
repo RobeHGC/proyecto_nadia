@@ -173,6 +173,53 @@ class DatabaseManager:
 
             return result == "UPDATE 1"
 
+    async def cancel_review(self, interaction_id: str, reason: Optional[str] = None) -> bool:
+        """Cancel a review without saving to database.
+        
+        This removes the review from the reviewing state and returns it to pending,
+        ensuring no data contamination occurs when reviewers cancel their work.
+        
+        Args:
+            interaction_id: The review ID to cancel
+            reason: Optional reason for cancellation (for logging)
+            
+        Returns:
+            bool: True if successfully cancelled, False if review not found
+        """
+        async with self._pool.acquire() as conn:
+            # Check if the review exists and is in reviewing state
+            existing = await conn.fetchrow(
+                "SELECT id, review_status FROM interactions WHERE id = $1",
+                interaction_id
+            )
+            
+            if not existing:
+                logger.warning(f"Attempted to cancel non-existent review: {interaction_id}")
+                return False
+                
+            if existing['review_status'] != 'reviewing':
+                logger.warning(f"Attempted to cancel review in wrong state: {interaction_id} (status: {existing['review_status']})")
+                return False
+            
+            # Return review to pending state without saving any edited content
+            result = await conn.execute(
+                """
+                UPDATE interactions
+                SET review_status = 'pending',
+                    review_started_at = NULL,
+                    reviewer_id = NULL
+                WHERE id = $1 AND review_status = 'reviewing'
+                """,
+                interaction_id
+            )
+            
+            if result == "UPDATE 1":
+                logger.info(f"Review cancelled successfully: {interaction_id}" + (f" (reason: {reason})" if reason else ""))
+                return True
+            else:
+                logger.error(f"Failed to cancel review: {interaction_id}")
+                return False
+
     async def get_interaction(self, interaction_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific interaction by ID."""
         async with self._pool.acquire() as conn:
