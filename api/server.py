@@ -57,7 +57,9 @@ class ReviewApprovalRequest(BaseModel):
             'ENGLISH_SLANG', 'TEXT_SPEAK', 'STRUCT_SHORTEN',
             'STRUCT_BUBBLE', 'CONTENT_EMOJI_ADD', 'CONTENT_EMOJI_CUT', 'CONTENT_QUESTION',
             'CONTENT_REWRITE', 'TONE_LESS_IA', 'CONTENT_QUESTION_CUT', 
-            'CONTENT_SENTENCE_ADD', 'TONE_ROMANTIC_UP'
+            'CONTENT_SENTENCE_ADD', 'TONE_ROMANTIC_UP',
+            # Missing tags from DATABASE_SCHEMA.sql
+            'TONE_CASUAL', 'TONE_FLIRT_UP', 'TONE_CRINGE_DOWN', 'TONE_ENERGY_UP'
         }
         for tag in v:
             if tag not in allowed_tags:
