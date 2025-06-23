@@ -34,8 +34,9 @@ class AnalyticsDataRequest(BaseModel):
     date_from: Optional[str] = Field(default=None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$")
     date_to: Optional[str] = Field(default=None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$")
     user_id: Optional[str] = Field(default=None, max_length=50)
+    customer_status: Optional[str] = Field(default=None, pattern="^(PROSPECT|LEAD_QUALIFIED|CUSTOMER|CHURNED|LEAD_EXHAUSTED|)$")
     
-    @field_validator('search', 'date_from', 'date_to', 'user_id', mode='before')
+    @field_validator('search', 'date_from', 'date_to', 'user_id', 'customer_status', mode='before')
     @classmethod
     def convert_empty_to_none(cls, v):
         """Convert empty strings to None for optional fields."""
@@ -47,11 +48,17 @@ class BackupRequest(BaseModel):
     compress: bool = Field(default=True)
 
 class CleanDataRequest(BaseModel):
-    date_from: Optional[str] = Field(default=None, pattern="^\\d{4}-\\d{2}-\\d{2}$")
-    date_to: Optional[str] = Field(default=None, pattern="^\\d{4}-\\d{2}-\\d{2}$")
+    date_from: Optional[str] = Field(default=None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$")
+    date_to: Optional[str] = Field(default=None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$")
     user_ids: Optional[List[str]] = Field(default=None, max_items=100)
     test_data_only: bool = Field(default=False)
     confirm: bool = Field(default=False)
+    
+    @field_validator('date_from', 'date_to', mode='before')
+    @classmethod
+    def convert_empty_to_none(cls, v):
+        """Convert empty strings to None for optional fields."""
+        return None if v == "" else v
 
 class DataAnalyticsManager:
     def __init__(self):
@@ -148,13 +155,19 @@ class DataAnalyticsManager:
                 base_query += f" AND i.user_id = ${param_count}"
                 query_params.append(params.user_id)
                 
+            # Customer status filtering
+            if params.customer_status:
+                param_count += 1
+                base_query += f" AND i.customer_status = ${param_count}"
+                query_params.append(params.customer_status)
+                
             # Search filtering
             if params.search:
                 param_count += 1
-                base_query += f" AND (i.user_message ILIKE ${param_count} OR i.ai_response_formatted ILIKE ${param_count})"
+                base_query += f" AND (i.user_message ILIKE ${param_count} OR i.llm1_raw_response ILIKE ${param_count} OR array_to_string(i.final_bubbles, ' ') ILIKE ${param_count})"
                 search_term = f"%{params.search}%"
-                query_params.extend([search_term, search_term])
-                param_count += 1
+                query_params.extend([search_term, search_term, search_term])
+                param_count += 2
             
             # Count query
             count_query = f"SELECT COUNT(*) FROM ({base_query}) as filtered"
@@ -380,6 +393,16 @@ class DataAnalyticsManager:
             logger.error(f"Error restoring backup: {e}")
             raise HTTPException(status_code=500, detail=f"Restore error: {str(e)}")
 
+    async def delete_backup(self, backup_id: str) -> Dict[str, Any]:
+        """Delete a specific backup."""
+        try:
+            result = await self.backup_manager.delete_backup(backup_id)
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error deleting backup: {e}")
+            raise HTTPException(status_code=500, detail=f"Delete backup error: {str(e)}")
+
     async def clean_data(self, request: CleanDataRequest) -> Dict[str, Any]:
         """Clean data with specified filters."""
         try:
@@ -432,9 +455,9 @@ class DataAnalyticsManager:
             params.append(request.user_ids)
             
         if request.test_data_only:
-            query += " AND (user_message ILIKE '%test%' OR ai_response_formatted ILIKE '%test%')"
+            query += " AND (user_message ILIKE '%test%' OR array_to_string(final_bubbles, ' ') ILIKE '%test%')"
         
-        async with self.db_manager.get_connection() as conn:
+        async with self.db_manager._pool.acquire() as conn:
             result = await conn.fetchrow(query, *params)
             
         return {
@@ -465,9 +488,9 @@ class DataAnalyticsManager:
             params.append(request.user_ids)
             
         if request.test_data_only:
-            query += " AND (user_message ILIKE '%test%' OR ai_response_formatted ILIKE '%test%')"
+            query += " AND (user_message ILIKE '%test%' OR array_to_string(final_bubbles, ' ') ILIKE '%test%')"
         
-        async with self.db_manager.get_connection() as conn:
+        async with self.db_manager._pool.acquire() as conn:
             result = await conn.execute(query, *params)
             # Extract number from "DELETE 123" response
             return int(result.split()[-1]) if result.split() else 0
@@ -491,14 +514,17 @@ class DataAnalyticsManager:
             if filters.get('date_from'):
                 param_count += 1
                 query += f" AND i.created_at >= ${param_count}"
-                params.append(f"{filters['date_from']} 00:00:00")
+                params.append(datetime.strptime(f"{filters['date_from']} 00:00:00", "%Y-%m-%d %H:%M:%S"))
                 
             if filters.get('date_to'):
                 param_count += 1
                 query += f" AND i.created_at <= ${param_count}"
-                params.append(f"{filters['date_to']} 23:59:59")
+                params.append(datetime.strptime(f"{filters['date_to']} 23:59:59", "%Y-%m-%d %H:%M:%S"))
             
             query += " ORDER BY i.created_at DESC"
+            
+            # Ensure database is initialized
+            await self.ensure_db_initialized()
             
             async with self.db_manager._pool.acquire() as conn:
                 rows = await conn.fetch(query, *params)
@@ -546,9 +572,10 @@ class DataAnalyticsManager:
             raise HTTPException(status_code=404, detail="No data to export")
         
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
-        writer.writeheader()
         
+        # Get all unique fieldnames from all rows
+        all_fieldnames = set()
+        row_dicts = []
         for row in rows:
             row_dict = dict(row)
             # Format datetime objects
@@ -557,6 +584,15 @@ class DataAnalyticsManager:
                     row_dict[key] = value.isoformat()
                 elif isinstance(value, list):
                     row_dict[key] = json.dumps(value)
+            row_dicts.append(row_dict)
+            all_fieldnames.update(row_dict.keys())
+        
+        # Create writer with all fieldnames
+        writer = csv.DictWriter(output, fieldnames=sorted(all_fieldnames))
+        writer.writeheader()
+        
+        # Write rows
+        for row_dict in row_dicts:
             writer.writerow(row_dict)
         
         output.seek(0)
@@ -667,9 +703,7 @@ class DataAnalyticsManager:
                     'customer_status': {'type': 'character varying', 'required': False},
                     'review_status': {'type': 'text', 'required': False},
                     'user_message': {'type': 'text', 'required': True},
-                    'ai_response_raw': {'type': 'text', 'required': False},
-                    'ai_response_formatted': {'type': 'text', 'required': False},
-                    'human_edited_response': {'type': 'text', 'required': False},
+                    'llm1_raw_response': {'type': 'text', 'required': False},
                     'final_bubbles': {'type': 'ARRAY', 'required': False},
                     'llm1_model': {'type': 'text', 'required': False},
                     'llm2_model': {'type': 'text', 'required': False},

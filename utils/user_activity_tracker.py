@@ -95,34 +95,27 @@ class UserActivityTracker:
     
     async def _adaptive_window_timer(self, user_id: str, process_callback):
         """
-        Adaptive window timer that waits for additional messages.
-        
-        Phase 1: Initial window (1.5s) - detect rapid messages
-        Phase 2: If rapid detected, wait for typing completion
+        Simple debouncing timer - waits 5 seconds after last message.
+        If new message arrives, timer is cancelled and restarted.
         """
         try:
-            # Phase 1: Initial detection window
-            await asyncio.sleep(self.config.typing_window_delay)
+            # Simple debouncing: wait 5 seconds after last message
+            debounce_delay = self.config.typing_debounce_delay  # 5.0 seconds
             
+            logger.info(f"PACING: Starting {debounce_delay}s debounce timer for user {user_id}")
+            await asyncio.sleep(debounce_delay)
+            
+            # If we reach here, no new messages arrived in the debounce period
             buffer_size = len(self.message_buffers.get(user_id, []))
-            
-            if buffer_size >= self.config.min_batch_size:
-                # Rapid messages detected - enter batching mode
-                logger.info(f"PACING: Rapid messages detected for user {user_id} ({buffer_size} messages), entering batching mode")
-                
-                # Phase 2: Wait for typing completion
-                await self._wait_for_typing_completion(user_id)
-                
-            else:
-                logger.info(f"PACING: Single message for user {user_id}, processing immediately")
+            logger.info(f"PACING: Debounce period completed for user {user_id}, processing {buffer_size} messages")
             
             # Process all buffered messages
             await self._process_buffer(user_id, process_callback)
             
         except asyncio.CancelledError:
-            logger.debug(f"PACING: Timer cancelled for user {user_id}")
+            logger.debug(f"PACING: Debounce timer cancelled for user {user_id} (new message arrived)")
         except Exception as exc:
-            logger.error(f"PACING: Error in adaptive timer for user {user_id}: {exc}")
+            logger.error(f"PACING: Error in debounce timer for user {user_id}: {exc}")
             # Process buffer anyway to avoid losing messages
             await self._process_buffer(user_id, process_callback)
     
@@ -194,7 +187,7 @@ class UserActivityTracker:
         logger.debug(f"PACING: Added message to buffer for user {user_id}, buffer size: {len(self.message_buffers[user_id])}")
     
     async def _process_buffer(self, user_id: str, process_callback):
-        """Process all messages in user's buffer."""
+        """Process all messages in user's buffer as a combined batch."""
         if user_id not in self.message_buffers or not self.message_buffers[user_id]:
             return
         
@@ -212,23 +205,45 @@ class UserActivityTracker:
         
         logger.info(f"PACING: Processing buffer for user {user_id} with {buffer_size} messages")
         
-        # Process each message through original callback
-        for message_data in messages:
-            try:
-                event = message_data.get("event")
-                if event:
-                    await process_callback(event)
-                else:
-                    logger.warning(f"PACING: No event data for buffered message from user {user_id}")
-            except Exception as exc:
-                logger.error(f"PACING: Error processing buffered message for user {user_id}: {exc}")
-        
-        # Log metrics
         if buffer_size > 1:
-            estimated_savings = ((buffer_size - 1) / buffer_size) * 100
-            logger.info(f"PACING_METRICS: user={user_id}, action=batch_processed, messages={buffer_size}, estimated_savings={estimated_savings:.1f}%")
+            # Combine messages into a single batch for processing
+            combined_text = " ".join([msg["message"] for msg in messages])
+            # Use the latest message event but with combined text
+            latest_event = messages[-1].get("event")
+            if latest_event:
+                # Create a combined message for processing
+                combined_message_data = {
+                    "user_id": user_id,
+                    "message": combined_text,
+                    "chat_id": latest_event.chat_id,
+                    "message_id": latest_event.message.id,
+                    "timestamp": messages[-1]["timestamp"],
+                    "batch_size": buffer_size  # Track that this is a batch
+                }
+                
+                try:
+                    # Process as a single combined message
+                    await process_callback(combined_message_data, is_batch=True)
+                    
+                    # Log metrics
+                    estimated_savings = ((buffer_size - 1) / buffer_size) * 100
+                    logger.info(f"PACING_METRICS: user={user_id}, action=batch_processed, messages={buffer_size}, estimated_savings={estimated_savings:.1f}%")
+                except Exception as exc:
+                    logger.error(f"PACING: Error processing batch for user {user_id}: {exc}")
+            else:
+                logger.warning(f"PACING: No event data for batch from user {user_id}")
         else:
-            logger.info(f"PACING_METRICS: user={user_id}, action=single_processed, messages={buffer_size}, estimated_savings=0%")
+            # Single message - process normally
+            message_data = messages[0]
+            event = message_data.get("event")
+            if event:
+                try:
+                    await process_callback(event)
+                    logger.info(f"PACING_METRICS: user={user_id}, action=single_processed, messages={buffer_size}, estimated_savings=0%")
+                except Exception as exc:
+                    logger.error(f"PACING: Error processing single message for user {user_id}: {exc}")
+            else:
+                logger.warning(f"PACING: No event data for single message from user {user_id}")
     
     # ────────────────────────────────────────────────────────────────
     # Typing State Management

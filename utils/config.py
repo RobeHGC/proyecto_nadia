@@ -37,7 +37,7 @@ class Config:
     openai_model: str = "gpt-3.5-turbo"
     
     # Adaptive Window Message Pacing
-    enable_typing_pacing: bool = False
+    enable_typing_pacing: bool = True
     typing_window_delay: float = 1.5
     typing_debounce_delay: float = 5.0
     min_batch_size: int = 2
@@ -73,7 +73,7 @@ class Config:
             llm2_model=os.getenv("LLM2_MODEL", "gpt-4o-mini"),
             
             # Adaptive Window Message Pacing configuration
-            enable_typing_pacing=os.getenv("ENABLE_TYPING_PACING", "false").lower() == "true",
+            enable_typing_pacing=os.getenv("ENABLE_TYPING_PACING", "true").lower() == "true",
             typing_window_delay=float(os.getenv("TYPING_WINDOW_DELAY", "1.5")),
             typing_debounce_delay=float(os.getenv("TYPING_DEBOUNCE_DELAY", "5.0")),
             min_batch_size=int(os.getenv("MIN_BATCH_SIZE", "2")),

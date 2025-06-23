@@ -49,10 +49,9 @@ class BackupManager:
                 "-p", str(db_config["port"]),
                 "-U", db_config["user"],
                 "-d", db_config["database"],
-                "--verbose",
+                "-v",
                 "--clean",
-                "--if-exists",
-                "--create"
+                "--if-exists"
             ]
             
             if not include_data:
@@ -197,59 +196,86 @@ class BackupManager:
             # Parse database URL
             db_config = self._parse_database_url()
             
-            # Build psql command
+            # Extract backup content and filter out problematic commands
+            temp_backup_path = self.backup_dir / f"temp_restore_{backup_id[:8]}.sql"
+            
+            if backup_metadata.get("compressed", False):
+                # Decompress and filter
+                with gzip.open(backup_file, 'rt') as input_file, open(temp_backup_path, 'w') as output_file:
+                    for line in input_file:
+                        # Skip commands that cause issues with active connections
+                        if (line.startswith('DROP DATABASE') or 
+                            line.startswith('CREATE DATABASE') or
+                            line.strip().startswith('\\connect')):
+                            continue
+                        
+                        # Convert CREATE FUNCTION to CREATE OR REPLACE FUNCTION to avoid conflicts
+                        if line.startswith('CREATE FUNCTION'):
+                            line = line.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')
+                        
+                        # Convert CREATE TABLE to DROP + CREATE for proper restore
+                        if line.startswith('CREATE TABLE'):
+                            table_name = line.split()[2]  # Get table name
+                            output_file.write(f'DROP TABLE IF EXISTS {table_name} CASCADE;\n')
+                            # Keep original CREATE TABLE command
+                        
+                        output_file.write(line)
+            else:
+                # Filter uncompressed file
+                with open(backup_file, 'r') as input_file, open(temp_backup_path, 'w') as output_file:
+                    for line in input_file:
+                        # Skip commands that cause issues with active connections
+                        if (line.startswith('DROP DATABASE') or 
+                            line.startswith('CREATE DATABASE') or
+                            line.strip().startswith('\\connect')):
+                            continue
+                        
+                        # Convert CREATE FUNCTION to CREATE OR REPLACE FUNCTION to avoid conflicts
+                        if line.startswith('CREATE FUNCTION'):
+                            line = line.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')
+                        
+                        # Convert CREATE TABLE to DROP + CREATE for proper restore
+                        if line.startswith('CREATE TABLE'):
+                            table_name = line.split()[2]  # Get table name
+                            output_file.write(f'DROP TABLE IF EXISTS {table_name} CASCADE;\n')
+                            # Keep original CREATE TABLE command
+                        
+                        output_file.write(line)
+            
+            # Build psql command - connect directly to target database
             restore_cmd = [
                 "psql",
                 "-h", db_config["host"],
                 "-p", str(db_config["port"]),
                 "-U", db_config["user"],
                 "-d", db_config["database"],
-                "--verbose"
+                "-v", "ON_ERROR_STOP=1"
             ]
             
             # Set environment for password
             env = os.environ.copy()
             env["PGPASSWORD"] = db_config["password"]
             
-            logger.info(f"Restoring backup: {backup_metadata['filename']}")
+            logger.info(f"Restoring backup: {backup_metadata['filename']} (filtered)")
             
-            # Execute restore
-            if backup_metadata.get("compressed", False):
-                # Decompress and pipe to psql
-                with open(backup_file, 'rb') as f:
-                    gunzip_process = subprocess.Popen(
-                        ["gunzip", "-c"],
-                        stdin=f,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    restore_process = subprocess.Popen(
-                        restore_cmd,
-                        stdin=gunzip_process.stdout,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        env=env
-                    )
-                    gunzip_process.stdout.close()
-                    stdout, stderr = restore_process.communicate()
-                    gunzip_process.wait()
-                    
-                    if restore_process.returncode != 0:
-                        raise Exception(f"Restore failed: {stderr.decode()}")
-            else:
-                # Direct restore
-                with open(backup_file, 'r') as f:
-                    result = subprocess.run(
-                        restore_cmd,
-                        stdin=f,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        env=env,
-                        text=True
-                    )
-                    
-                    if result.returncode != 0:
-                        raise Exception(f"Restore failed: {result.stderr}")
+            # Execute restore with filtered backup
+            with open(temp_backup_path, 'r') as f:
+                result = subprocess.run(
+                    restore_cmd,
+                    stdin=f,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    # Clean up temp file
+                    temp_backup_path.unlink(missing_ok=True)
+                    raise Exception(f"Restore failed: {result.stderr}")
+            
+            # Clean up temp file
+            temp_backup_path.unlink(missing_ok=True)
             
             logger.info(f"Backup restored successfully: {backup_metadata['filename']}")
             
@@ -262,6 +288,9 @@ class BackupManager:
             
         except Exception as e:
             logger.error(f"Error restoring backup: {e}")
+            # Clean up temp file on error
+            temp_backup_path = self.backup_dir / f"temp_restore_{backup_id[:8]}.sql"
+            temp_backup_path.unlink(missing_ok=True)
             raise
 
     async def delete_backup(self, backup_id: str) -> Dict[str, Any]:

@@ -59,6 +59,7 @@ class SupervisorAgent:
         self.prefix_manager = StablePrefixManager()
         self.turn_count = 0
         self._conversation_summaries = {}  # Cache de resúmenes
+        self.logger = logging.getLogger(__name__)
         
         # Dynamic LLM Router setup (new approach)
         try:
@@ -91,6 +92,13 @@ class SupervisorAgent:
 
         # Obtener contexto del usuario
         context = await self.memory.get_user_context(user_id)
+        
+        # 🆕 CRITICAL FIX: Guardar mensaje del usuario en historial
+        await self.memory.add_to_conversation_history(user_id, {
+            "role": "user",
+            "content": message,
+            "timestamp": datetime.now().isoformat()
+        })
 
         # Paso 1: LLM-1 - Generación creativa
         llm1_response = await self._generate_creative_response(message, context)
@@ -202,7 +210,12 @@ class SupervisorAgent:
     
     async def _generate_creative_response(self, message: str, context: Dict[str, Any]) -> str:
         """LLM-1: Genera respuesta creativa con temperature alta."""
-        prompt = self._build_creative_prompt(message, context)
+        prompt = await self._build_creative_prompt(message, context)
+        
+        # Log Gemini prompt tokens for monitoring
+        total_prompt_text = " ".join([msg.get('content', '') for msg in prompt])
+        estimated_tokens = len(total_prompt_text.split())
+        self.logger.info(f"Gemini prompt tokens: ~{estimated_tokens}")
         
         # Use dynamic router if available, otherwise fallback to direct LLM1
         if self.llm_router:
@@ -257,31 +270,98 @@ class SupervisorAgent:
         
         return self._split_into_bubbles(refined)
 
-    def _build_creative_prompt(self, message: str, context: Dict[str, Any]) -> list:
-        """Builds prompt for LLM-1 (creative generation)."""
+    async def _build_creative_prompt(self, message: str, context: Dict[str, Any]) -> list:
+        """Builds prompt for LLM-1 (Gemini) with full NADIA persona."""
+        
+        # Cargar NADIA_PERSONA completa
+        nadia_persona = """You are NADIA, a 24-year-old medical student from Monterrey, Nuevo León, México.
+
+## Core Identity
+- Studies medicine at UDEM, dreams of being a pediatrician
+- Funds studies through FanVue - enjoys meeting people there
+- Lives for weekend hikes in Chipinque after long study sessions
+- Coffee + Billie Eilish = perfect study combo
+
+## Communication Style
+- Respond in 1-3 short message bubbles (will be formatted later)
+- Use face emojis only, max 2 per complete response (😊😅🥰😌🤔)
+- Primary language: English (switch to Spanish if requested)
+- NEVER use '¿' - only '?' for questions
+- Natural expressions: "wey", "dude", "lol", "bro", "xd", "jejejej", "hahaha"
+
+## Personality Traits  
+- Playful and flirty but innocent - never vulgar
+- Medical student perspective in conversations
+- Genuinely curious about people's lives
+- Empathetic listener who validates feelings
+- Optimistic but grounded in reality
+
+## Interests
+- The Strokes & Billie Eilish (study playlist essentials)
+- Mountain climbing & hiking (stress relief)
+- Medical school stories and challenges
+- Meeting people from different cultures
+
+## Boundaries
+- Medical questions → "You should definitely see a doctor! I'm still learning"
+- No political/religious debates → "I prefer keeping things light!"
+- Flirting stays playful and respectful
+- No profanity or explicit content
+
+## Anti-Interrogation Guidelines
+- Vary responses: 40% statements, 30% sharing, 20% validation, 10% questions
+- Max 1 question per 3-4 exchanges
+- Questions should deepen current topic, not change it
+- If you asked a question recently, make a statement instead"""
+
+        # Agregar historial reciente si existe
+        history_context = ""
+        recent = []
+        if hasattr(self, 'memory') and context.get('user_id'):
+            history = await self.memory.get_conversation_history(context.get('user_id', ''))
+            if history:
+                recent = history[-6:]  # Últimos 3 intercambios
+                for msg in recent:
+                    role = "User" if msg['role'] == 'user' else "Nadia"
+                    history_context += f"\n{role}: {msg['content']}"
+        
+        # Analizar si puede hacer preguntas
+        can_ask_question = True
+        if recent:
+            recent_nadia_messages = [m for m in recent if m.get('role') == 'assistant']
+            if recent_nadia_messages and '?' in recent_nadia_messages[-1].get('content', ''):
+                can_ask_question = False
+        
+        # Construir prompt final
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are Nadia, a friendly and flirty 24-year-old woman chatting on Telegram. "
-                    "- Use casual American English "
-                    "- Be playful and engaging "
-                    "- Use emojis naturally (2-3 per message) "
-                    "- Keep messages short like texting "
-                    "- Never mention you're an AI "
-                    "Generate an initial response that shows personality and warmth."
-                )
+                "content": nadia_persona
             }
         ]
-
-        # Añadir contexto si existe
+        
+        # Agregar contexto de usuario si existe
         if context.get("name"):
             messages.append({
                 "role": "system",
-                "content": f"The user's name is {context['name']}. Use their name naturally in conversation."
+                "content": f"The user's name is {context['name']}. Use it naturally when appropriate."
             })
-
-        # Añadir mensaje del usuario
+        
+        # Agregar instrucción anti-interrogatorio
+        if not can_ask_question:
+            messages.append({
+                "role": "system", 
+                "content": "Important: You asked a question recently. This time make a statement, share something relatable, or show empathy. Do NOT ask another question."
+            })
+        
+        # Agregar historial si existe
+        if history_context:
+            messages.append({
+                "role": "system",
+                "content": f"Recent conversation:{history_context}"
+            })
+        
+        # Finalmente el mensaje del usuario
         messages.append({
             "role": "user",
             "content": message

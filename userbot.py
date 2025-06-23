@@ -124,22 +124,34 @@ class UserBot:
     # ────────────────────────────────
     # WAL Enqueue (Original)
     # ────────────────────────────────
-    async def _enqueue_message(self, event):
+    async def _enqueue_message(self, event_or_data, is_batch=False):
         """Adds message to WAL before processing."""
         try:
             r = await self._get_redis()
-            message_data = {
-                "user_id": str(event.sender_id),
-                "message": event.text,
-                "chat_id": event.chat_id,
-                "message_id": event.message.id,
-                "timestamp": datetime.now().isoformat(),
-            }
+            
+            if is_batch:
+                # Handle batch data directly
+                message_data = event_or_data
+                logger.info("Batch message enqueued in WAL from user %s (batch size: %d)", 
+                           message_data["user_id"], message_data.get("batch_size", 1))
+            else:
+                # Handle regular event
+                event = event_or_data
+                message_data = {
+                    "user_id": str(event.sender_id),
+                    "message": event.text,
+                    "chat_id": event.chat_id,
+                    "message_id": event.message.id,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                logger.info("Message enqueued in WAL from user %s", message_data["user_id"])
+            
             await r.lpush(self.message_queue_key, json.dumps(message_data))
-            logger.info("Message enqueued in WAL from user %s", message_data["user_id"])
+            
         except Exception as exc:  # pragma: no cover
             logger.error("Error enqueuing message in WAL: %s", exc)
-            await self._handle_message_direct(event)
+            if not is_batch:
+                await self._handle_message_direct(event_or_data)
 
     # ────────────────────────────────
     # WAL Worker
@@ -213,6 +225,13 @@ class UserBot:
                                 await asyncio.sleep(0.5)  # Small delay between bubbles
                         
                         logger.info("Approved message sent to user %s: %d bubbles", user_id, len(bubbles))
+                        
+                        # 🆕 CRITICAL FIX: Guardar respuesta del bot en historial
+                        await self.memory.add_to_conversation_history(user_id, {
+                            "role": "assistant",
+                            "content": " ".join(bubbles),
+                            "timestamp": datetime.now().isoformat()
+                        })
                     else:
                         # Try to get user info from database if not in Redis
                         database_mode = getattr(self.config, 'database_mode', 'normal')
@@ -234,6 +253,13 @@ class UserBot:
                                             await asyncio.sleep(0.5)  # Small delay between bubbles
                                     
                                     logger.info("Approved message sent to user %s: %d bubbles", user_id, len(bubbles))
+                                    
+                                    # 🆕 CRITICAL FIX: Guardar respuesta del bot en historial
+                                    await self.memory.add_to_conversation_history(user_id, {
+                                        "role": "assistant",
+                                        "content": " ".join(bubbles),
+                                        "timestamp": datetime.now().isoformat()
+                                    })
                                 else:
                                     logger.error("Review %s not found in database", review_id)
                             except Exception as e:
@@ -260,9 +286,19 @@ class UserBot:
             route = self.cognitive_controller.route_message(msg["message"])
 
             if route == "fast_path":
-                # Fast path commands still get sent directly
-                response = await self._handle_fast_path(msg["message"])
-                await self.client.send_message(msg["chat_id"], response)
+                # Fast path commands with minimal typing simulation
+                response = await self._handle_fast_path(msg["message"], msg["user_id"])
+                
+                # Add minimal typing delay to maintain naturalness
+                if self.typing_simulator:
+                    await self.typing_simulator.simulate_human_cadence(
+                        msg["chat_id"], [response], msg["message"]
+                    )
+                else:
+                    # Fallback: small delay
+                    await asyncio.sleep(1.0)
+                    await self.client.send_message(msg["chat_id"], response)
+                
                 logger.info("Fast path response sent: %.50s…", response)
             else:
                 # Slow path: Queue for human review instead of sending
@@ -280,10 +316,7 @@ class UserBot:
 
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing WAL message: %s", exc)
-            await self.client.send_message(
-                msg["chat_id"],
-                "Oops, getting lots of messages rn! Give me a sec 😅"
-            )
+            # No enviar mensajes enlatados - prohibido para mantener naturalidad
 
     # ────────────────────────────────
     # HITL Review Queue Management
@@ -410,9 +443,16 @@ class UserBot:
     # ────────────────────────────────
     # Fast-path (English)
     # ────────────────────────────────
-    async def _handle_fast_path(self, message: str) -> str:
+    async def _handle_fast_path(self, message: str, user_id: str = None) -> str:
         """Handles simple commands."""
         m = message.lower().strip()
+        
+        # Restrict quick commands to specific admin user ID
+        admin_user_id = "7833076816"
+        if user_id and user_id != admin_user_id and m in ["/status", "/commands"]:
+            # Return natural response for non-admin users on restricted commands
+            return "hey! what's up? 😊"
+        
         fast = {
             "/help": (
                 "🌟 Hey! I'm Nadia, your chat buddy here.\n\n"
@@ -442,8 +482,18 @@ class UserBot:
             route = self.cognitive_controller.route_message(message)
 
             if route == "fast_path":
-                response = await self._handle_fast_path(message)
-                await event.reply(response)
+                response = await self._handle_fast_path(message, user_id)
+                
+                # Add minimal typing delay to maintain naturalness
+                if self.typing_simulator:
+                    await self.typing_simulator.simulate_human_cadence(
+                        event.chat_id, [response], message
+                    )
+                else:
+                    # Fallback: small delay
+                    await asyncio.sleep(1.0)
+                    await event.reply(response)
+                
                 logger.info("Direct fast path response sent: %.50s...", response)
             else:
                 # Process with supervisor to get ReviewItem
@@ -458,9 +508,7 @@ class UserBot:
 
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing direct message: %s", exc)
-            await event.reply(
-                "Oops, getting lots of messages rn! Give me a sec 😅"
-            )
+            # No enviar mensajes enlatados - prohibido para mantener naturalidad
 
 
 # ────────────────────────────────

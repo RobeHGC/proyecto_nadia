@@ -1373,6 +1373,7 @@ async def get_analytics_data(
     date_from: Optional[str] = Query(None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$"),
     date_to: Optional[str] = Query(None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$"),
     user_id: Optional[str] = Query(None, max_length=50),
+    customer_status: Optional[str] = Query(None, pattern="^(PROSPECT|LEAD_QUALIFIED|CUSTOMER|CHURNED|LEAD_EXHAUSTED|)$"),
     _: Optional[str] = Query(None, description="Cache buster parameter"),
     api_key: str = Depends(verify_api_key)
 ):
@@ -1385,7 +1386,8 @@ async def get_analytics_data(
         search=search,
         date_from=date_from,
         date_to=date_to,
-        user_id=user_id
+        user_id=user_id,
+        customer_status=customer_status
     )
     return await analytics_manager.get_analytics_data(params)
 
@@ -1430,6 +1432,17 @@ async def restore_backup(
 ):
     """Restore from a specific backup."""
     return await analytics_manager.restore_backup(backup_id)
+
+
+@app.delete("/api/analytics/backups/{backup_id}")
+@limiter.limit("10/minute")
+async def delete_backup(
+    request: Request,
+    backup_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Delete a specific backup."""
+    return await analytics_manager.delete_backup(backup_id)
 
 
 @app.post("/api/analytics/clean")
@@ -1495,6 +1508,16 @@ async def get_data_integrity_report(
     - List of data transformations applied
     """
     return await analytics_manager.get_data_integrity_report()
+
+
+# Configuration endpoint for frontend
+@app.get("/api/config")
+async def get_config():
+    """Get configuration for frontend dashboard."""
+    return {
+        "apiKey": API_KEY,
+        "apiBase": "http://localhost:8000"
+    }
 
 
 if __name__ == "__main__":

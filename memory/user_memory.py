@@ -12,10 +12,14 @@ logger = logging.getLogger(__name__)
 class UserMemoryManager:
     """Gestiona la memoria y contexto de cada usuario."""
 
-    def __init__(self, redis_url: str):
-        """Inicializa el gestor con conexión a Redis."""
+    def __init__(self, redis_url: str, max_history_length: int = 50, max_context_size_kb: int = 100):
+        """Inicializa el gestor con conexión a Redis y límites de memoria."""
         self.redis_url = redis_url
         self._redis = None
+        
+        # Memory limits configuration
+        self.max_history_length = max_history_length  # Máximo número de mensajes en historial
+        self.max_context_size_kb = max_context_size_kb  # Máximo tamaño del contexto en KB
 
     async def _get_redis(self):
         """Obtiene o crea la conexión a Redis."""
@@ -48,7 +52,7 @@ class UserMemoryManager:
         user_id: str,
         updates: Dict[str, Any]
     ) -> None:
-        """Actualiza el contexto de un usuario."""
+        """Actualiza el contexto de un usuario con límites de tamaño."""
         try:
             r = await self._get_redis()
 
@@ -57,6 +61,9 @@ class UserMemoryManager:
 
             # Actualizar con nuevos datos
             context.update(updates)
+            
+            # Aplicar límites de memoria
+            context = await self._apply_context_limits(user_id, context)
 
             # Guardar
             await r.set(
@@ -67,6 +74,72 @@ class UserMemoryManager:
 
         except Exception as e:
             logger.error(f"Error actualizando contexto: {e}")
+    
+    async def _apply_context_limits(self, user_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Aplica límites de memoria al contexto del usuario."""
+        try:
+            # Calcular tamaño actual del contexto
+            context_json = json.dumps(context)
+            context_size_kb = len(context_json.encode('utf-8')) / 1024
+            
+            # Si el contexto excede el límite, aplicar compresión inteligente
+            if context_size_kb > self.max_context_size_kb:
+                logger.warning(f"Context size for user {user_id}: {context_size_kb:.1f}KB exceeds limit {self.max_context_size_kb}KB")
+                context = await self._compress_context(user_id, context)
+                
+                # Recalcular tamaño después de compresión
+                context_json = json.dumps(context)
+                new_size_kb = len(context_json.encode('utf-8')) / 1024
+                logger.info(f"Context compressed for user {user_id}: {context_size_kb:.1f}KB → {new_size_kb:.1f}KB")
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error applying context limits for user {user_id}: {e}")
+            return context
+    
+    async def _compress_context(self, user_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Comprime el contexto manteniendo la información más relevante."""
+        try:
+            compressed_context = context.copy()
+            
+            # 1. Mantener datos esenciales del perfil
+            essential_keys = ['name', 'age', 'location', 'occupation', 'preferences']
+            profile_data = {k: v for k, v in context.items() if k in essential_keys}
+            
+            # 2. Comprimir historial de conversación si existe
+            if 'conversation_summary' in compressed_context:
+                # Mantener solo resumen más reciente
+                if isinstance(compressed_context['conversation_summary'], list):
+                    compressed_context['conversation_summary'] = compressed_context['conversation_summary'][-3:]
+            
+            # 3. Comprimir metadata menos importante
+            metadata_to_keep = ['last_interaction', 'first_interaction', 'total_messages']
+            metadata = {k: v for k, v in context.items() if k in metadata_to_keep}
+            
+            # 4. Crear contexto comprimido
+            compressed_context = {
+                **profile_data,
+                **metadata,
+                'compression_applied': True,
+                'compression_timestamp': json.dumps({"timestamp": "now"})  # Simple timestamp
+            }
+            
+            # 5. Si aún es muy grande, mantener solo lo esencial
+            compressed_json = json.dumps(compressed_context)
+            if len(compressed_json.encode('utf-8')) / 1024 > self.max_context_size_kb:
+                logger.warning(f"Applying aggressive compression for user {user_id}")
+                compressed_context = {
+                    'name': context.get('name', 'Unknown'),
+                    'last_interaction': context.get('last_interaction'),
+                    'aggressive_compression_applied': True
+                }
+            
+            return compressed_context
+            
+        except Exception as e:
+            logger.error(f"Error compressing context for user {user_id}: {e}")
+            return context
 
     async def set_name(self, user_id: str, name: str) -> None:
         """Almacena el nombre del usuario."""
@@ -188,9 +261,11 @@ class UserMemoryManager:
             # Agregar nuevo mensaje
             history.append(message)
             
-            # Mantener solo los últimos 20 mensajes para evitar que crezca demasiado
-            if len(history) > 20:
-                history = history[-20:]
+            # Aplicar límite de historial configurable
+            if len(history) > self.max_history_length:
+                # Mantener solo los mensajes más recientes
+                history = history[-self.max_history_length:]
+                logger.debug(f"History trimmed for user {user_id} to {self.max_history_length} messages")
             
             # Guardar historial actualizado
             history_key = f"user:{user_id}:history"
@@ -202,3 +277,99 @@ class UserMemoryManager:
             
         except Exception as e:
             logger.error(f"Error agregando al historial para {user_id}: {e}")
+
+    async def get_memory_stats(self, user_id: str) -> Dict[str, Any]:
+        """Obtiene estadísticas de memoria para un usuario."""
+        try:
+            context = await self.get_user_context(user_id)
+            history = await self.get_conversation_history(user_id)
+            
+            # Calcular tamaños
+            context_size_kb = len(json.dumps(context).encode('utf-8')) / 1024
+            history_size_kb = len(json.dumps(history).encode('utf-8')) / 1024
+            total_size_kb = context_size_kb + history_size_kb
+            
+            return {
+                'user_id': user_id,
+                'context_size_kb': round(context_size_kb, 2),
+                'history_size_kb': round(history_size_kb, 2),
+                'total_size_kb': round(total_size_kb, 2),
+                'history_length': len(history),
+                'max_history_length': self.max_history_length,
+                'max_context_size_kb': self.max_context_size_kb,
+                'context_limit_exceeded': context_size_kb > self.max_context_size_kb,
+                'history_limit_exceeded': len(history) > self.max_history_length,
+                'compression_applied': context.get('compression_applied', False)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting memory stats for {user_id}: {e}")
+            return {}
+    
+    async def cleanup_oversized_contexts(self) -> Dict[str, int]:
+        """Limpia contextos que exceden los límites en todos los usuarios."""
+        try:
+            user_ids = await self.get_all_user_ids()
+            cleaned_count = 0
+            total_users = len(user_ids)
+            total_size_before_kb = 0
+            total_size_after_kb = 0
+            
+            for user_id in user_ids:
+                try:
+                    # Obtener estadísticas antes
+                    stats_before = await self.get_memory_stats(user_id)
+                    total_size_before_kb += stats_before.get('total_size_kb', 0)
+                    
+                    # Solo procesar si excede límites
+                    if (stats_before.get('context_limit_exceeded', False) or 
+                        stats_before.get('history_limit_exceeded', False)):
+                        
+                        # Aplicar límites
+                        context = await self.get_user_context(user_id)
+                        compressed_context = await self._apply_context_limits(user_id, context)
+                        
+                        # Guardar contexto comprimido
+                        r = await self._get_redis()
+                        await r.set(
+                            f"user:{user_id}",
+                            json.dumps(compressed_context),
+                            ex=86400 * 30
+                        )
+                        
+                        # Limpiar historial si es necesario
+                        history = await self.get_conversation_history(user_id)
+                        if len(history) > self.max_history_length:
+                            history = history[-self.max_history_length:]
+                            history_key = f"user:{user_id}:history"
+                            await r.set(
+                                history_key,
+                                json.dumps(history),
+                                ex=86400 * 7
+                            )
+                        
+                        cleaned_count += 1
+                    
+                    # Obtener estadísticas después
+                    stats_after = await self.get_memory_stats(user_id)
+                    total_size_after_kb += stats_after.get('total_size_kb', 0)
+                    
+                except Exception as e:
+                    logger.error(f"Error cleaning user {user_id}: {e}")
+                    continue
+            
+            space_saved_kb = total_size_before_kb - total_size_after_kb
+            
+            logger.info(f"Memory cleanup completed: {cleaned_count}/{total_users} users processed, {space_saved_kb:.2f}KB saved")
+            
+            return {
+                'total_users': total_users,
+                'cleaned_users': cleaned_count,
+                'space_saved_kb': round(space_saved_kb, 2),
+                'total_size_before_kb': round(total_size_before_kb, 2),
+                'total_size_after_kb': round(total_size_after_kb, 2)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during memory cleanup: {e}")
+            return {}

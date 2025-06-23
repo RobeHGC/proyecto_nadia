@@ -233,7 +233,8 @@ class DataAnalytics {
                         search: d.search.value,
                         date_from: document.getElementById('date-from')?.value,
                         date_to: document.getElementById('date-to')?.value,
-                        user_id: document.getElementById('user-id-filter')?.value
+                        user_id: document.getElementById('user-id-filter')?.value,
+                        customer_status: document.getElementById('customer-status-filter')?.value
                     };
                 },
                 dataSrc: (json) => {
@@ -1021,6 +1022,56 @@ class DataAnalytics {
         }
     }
 
+    // Advanced Filter Functions
+    applyFilters() {
+        // Get values from advanced filter inputs
+        const searchValue = document.getElementById('search-input')?.value || '';
+        const dateFrom = document.getElementById('date-from')?.value || '';
+        const dateTo = document.getElementById('date-to')?.value || '';
+        const userId = document.getElementById('user-id-filter')?.value || '';
+
+        // Store filter values for DataTable ajax reload
+        this.currentFilters = {
+            search: searchValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            user_id: userId
+        };
+
+        // Reload the DataTable with new filters
+        if (this.dataTable) {
+            this.dataTable.ajax.reload();
+        }
+
+        this.showToast('Filters applied', 'success');
+    }
+
+    clearFilters() {
+        // Clear all filter inputs
+        const searchInput = document.getElementById('search-input');
+        const dateFromInput = document.getElementById('date-from');
+        const dateToInput = document.getElementById('date-to');
+        const userIdInput = document.getElementById('user-id-filter');
+
+        if (searchInput) searchInput.value = '';
+        if (dateFromInput) dateFromInput.value = '';
+        if (dateToInput) dateToInput.value = '';
+        if (userIdInput) userIdInput.value = '';
+
+        // Clear stored filters
+        this.currentFilters = null;
+
+        // Also clear quick filters
+        this.clearQuickFilters();
+
+        // Reload the DataTable
+        if (this.dataTable) {
+            this.dataTable.ajax.reload();
+        }
+
+        this.showToast('All filters cleared', 'info');
+    }
+
     // Backup Functions
     createBackup() {
         const modal = new bootstrap.Modal(document.getElementById('createBackupModal'));
@@ -1110,8 +1161,13 @@ class DataAnalytics {
             const data = { test_data_only: cleanupType === 'test', confirm: false };
             
             if (cleanupType === 'range') {
-                data.date_from = document.getElementById('cleanup-date-from').value;
-                data.date_to = document.getElementById('cleanup-date-to').value;
+                const dateFrom = document.getElementById('cleanup-date-from').value;
+                const dateTo = document.getElementById('cleanup-date-to').value;
+                
+                // Only include dates if they're not empty
+                if (dateFrom) data.date_from = dateFrom;
+                if (dateTo) data.date_to = dateTo;
+                
                 data.test_data_only = false;
             }
 
@@ -1145,8 +1201,13 @@ class DataAnalytics {
             const data = { test_data_only: cleanupType === 'test', confirm: true };
             
             if (cleanupType === 'range') {
-                data.date_from = document.getElementById('cleanup-date-from').value;
-                data.date_to = document.getElementById('cleanup-date-to').value;
+                const dateFrom = document.getElementById('cleanup-date-from').value;
+                const dateTo = document.getElementById('cleanup-date-to').value;
+                
+                // Only include dates if they're not empty
+                if (dateFrom) data.date_from = dateFrom;
+                if (dateTo) data.date_to = dateTo;
+                
                 data.test_data_only = false;
             }
 
@@ -1194,28 +1255,38 @@ class DataAnalytics {
 
             const url = `${this.API_BASE}/api/analytics/export?${params}`;
             
-            // Create download link
+            // Debug: Log the API key being used
+            console.log('exportData() - Using API Key:', this.API_KEY);
+            console.log('exportData() - Full Authorization header:', `Bearer ${this.API_KEY}`);
+            
+            // Use fetch with proper authorization header
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${this.API_KEY}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+            }
+
+            // Get the blob and create download
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            
+            // Create and trigger download
             const link = document.createElement('a');
-            link.href = url;
-            link.style.display = 'none';
+            link.href = downloadUrl;
+            link.download = `nadia_export_${new Date().toISOString().split('T')[0]}.${format}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
             
-            // Add authorization header by creating a temporary form
-            const form = document.createElement('form');
-            form.method = 'GET';
-            form.action = url;
-            form.style.display = 'none';
+            // Clean up the blob URL
+            window.URL.revokeObjectURL(downloadUrl);
             
-            const authInput = document.createElement('input');
-            authInput.type = 'hidden';
-            authInput.name = 'auth';
-            authInput.value = this.API_KEY;
-            form.appendChild(authInput);
-            
-            document.body.appendChild(form);
-            form.submit();
-            document.body.removeChild(form);
-            
-            this.showToast('Export started', 'info');
+            this.showToast('Export completed', 'success');
 
         } catch (error) {
             console.error('Error exporting data:', error);
@@ -1239,8 +1310,36 @@ class DataAnalytics {
                 }
             }
 
-            window.open(`${this.API_BASE}/api/analytics/export?${params}`, '_blank');
-            this.showToast('Export started', 'info');
+            const url = `${this.API_BASE}/api/analytics/export?${params}`;
+            
+            // Use fetch with proper authorization header
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${this.API_KEY}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+            }
+
+            // Get the blob and create download
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            
+            // Create and trigger download
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = `nadia_export_${new Date().toISOString().split('T')[0]}.${format}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Clean up the blob URL
+            window.URL.revokeObjectURL(downloadUrl);
+            
+            this.showToast('Export completed', 'success');
 
         } catch (error) {
             console.error('Error exporting data:', error);
@@ -1766,9 +1865,19 @@ class DataAnalytics {
         this.showToast('Backup details not implemented yet', 'info');
     }
 
-    deleteBackup(backupId) {
-        if (confirm('Are you sure you want to delete this backup? This action cannot be undone.')) {
-            this.showToast('Delete backup not implemented yet', 'info');
+    async deleteBackup(backupId) {
+        if (!confirm('Are you sure you want to delete this backup? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            await this.apiCall(`/api/analytics/backups/${backupId}`, 'DELETE');
+            this.showToast('Backup deleted successfully', 'success');
+            // Refresh the backups list
+            this.loadBackups();
+        } catch (error) {
+            console.error('Error deleting backup:', error);
+            this.showToast('Error deleting backup: ' + error.message, 'error');
         }
     }
 
@@ -2203,6 +2312,61 @@ document.addEventListener('DOMContentLoaded', () => {
 function toggleTheme() {
     if (analytics) {
         analytics.toggleTheme();
+    }
+}
+
+// Global functions for HTML onclick handlers
+function applyFilters() {
+    if (analytics) {
+        analytics.applyFilters();
+    }
+}
+
+function clearFilters() {
+    if (analytics) {
+        analytics.clearFilters();
+    }
+}
+
+function exportData() {
+    if (analytics) {
+        analytics.exportData();
+    }
+}
+
+function createBackup() {
+    if (analytics) {
+        analytics.createBackup();
+    }
+}
+
+function executeBackup() {
+    if (analytics) {
+        analytics.executeBackup();
+    }
+}
+
+function executeRestore() {
+    if (analytics) {
+        analytics.executeRestore();
+    }
+}
+
+function previewCleanup() {
+    if (analytics) {
+        analytics.previewCleanup();
+    }
+}
+
+function executeCleanup() {
+    if (analytics) {
+        analytics.executeCleanup();
+    }
+}
+
+function exportFullData() {
+    if (analytics) {
+        analytics.exportFullData();
     }
 }
 
