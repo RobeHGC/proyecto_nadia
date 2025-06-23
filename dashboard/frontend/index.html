@@ -29,6 +29,11 @@
             font-weight: 300;
         }
         
+        .btn-outline-light:hover {
+            background: white !important;
+            color: #667eea !important;
+        }
+        
         .metrics-bar {
             background: white;
             padding: 1rem 2rem;
@@ -709,7 +714,14 @@
 </head>
 <body>
     <div class="header">
-        <h1>🤖 NADIA HITL Review Dashboard - English US</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>🤖 NADIA HITL Review Dashboard - English US</h1>
+            <div style="display: flex; gap: 1rem;">
+                <a href="data-analytics.html" class="btn btn-outline-light" style="padding: 0.5rem 1rem; border: 2px solid white; color: white; text-decoration: none; border-radius: 8px; font-weight: 600; transition: all 0.2s;">
+                    📊 Data Analytics
+                </a>
+            </div>
+        </div>
     </div>
     
     <div class="metrics-bar">

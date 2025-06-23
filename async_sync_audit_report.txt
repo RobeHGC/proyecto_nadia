@@ -1,0 +1,443 @@
+REPORTE DE AUDITORÍA ASYNC/SYNC
+============================================================
+
+[HIGH] /home/rober/projects/chatbot_nadia/agents/supervisor_agent.py:150
+  Función: _build_prompt
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/agents/supervisor_agent.py:258
+  Función: _build_creative_prompt
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/agents/supervisor_agent.py:314
+  Función: _calculate_priority
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/analytics/cta_analytics.py:155
+  Función: export_cta_training_data
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:233
+  Función: root
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:251
+  Función: health_check
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:284
+  Función: delete_user_data
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:330
+  Función: get_user_memory
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:398
+  Función: get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:399
+  Función: get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:400
+  Función: get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:401
+  Función: get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:368
+  Función: get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:414
+  Función: get_review
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:541
+  Función: get_model_distribution
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:542
+  Función: get_model_distribution
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:573
+  Función: calculate_daily_savings
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:598
+  Función: get_dashboard_metrics
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:657
+  Función: get_edit_taxonomy
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:698
+  Función: get_available_models
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:737
+  Función: get_available_profiles
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:805
+  Función: get_current_model_status
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:872
+  Función: get_cost_estimate
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:985
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:986
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:987
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:990
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:991
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:992
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:995
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:996
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:997
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:921
+  Función: get_cost_tracking
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1048
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1049
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1050
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1051
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1052
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/api/server.py:1019
+  Función: get_profile_comparison
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/dashboard/backend/static_server.py:18
+  Función: dashboard_root
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/dashboard/backend/static_server.py:23
+  Función: get_app_js
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/dashboard/backend/static_server.py:28
+  Función: get_styles_css
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/gemini_client.py:122
+  Función: _convert_messages_to_prompt
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/gemini_client.py:123
+  Función: _convert_messages_to_prompt
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:82
+  Función: reload_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:119
+  Función: _is_hot_reload_enabled
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:119
+  Función: _is_hot_reload_enabled
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:127
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:128
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:129
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:139
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:140
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:141
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:142
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:143
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:144
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:145
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:146
+  Función: get_model_config
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:159
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:160
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:182
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:183
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:190
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:191
+  Función: get_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:204
+  Función: list_available_models
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:217
+  Función: list_available_profiles
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:229
+  Función: get_profile_details
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:268
+  Función: get_default_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:269
+  Función: get_default_profile
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:366
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:374
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:379
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:380
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:383
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:389
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/llms/model_registry.py:390
+  Función: get_cheapest_available_model
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:203
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:204
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:209
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:210
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:216
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:226
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:227
+  Función: main
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/scripts/verify_multi_llm.py:224
+  Función: verify_end_to_end
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/conftest.py:66
+  Función: event_loop
+  Problema: gather() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:41
+  Función: test_delete_existing_user
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:50
+  Función: test_delete_nonexistent_user
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:56
+  Función: test_health_endpoint
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:63
+  Función: test_root_endpoint
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:78
+  Función: test_get_user_memory
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:88
+  Función: test_get_nonexistent_user_memory
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_gdpr_api.py:114
+  Función: test_delete_user_with_multiple_keys
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:37
+  Función: test_get_pending_reviews
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:54
+  Función: test_get_pending_reviews_with_params
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:70
+  Función: test_get_specific_review
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:82
+  Función: test_get_nonexistent_review
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:198
+  Función: test_get_dashboard_metrics
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:224
+  Función: test_get_edit_taxonomy
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:234
+  Función: test_root_endpoint_updated
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_api.py:268
+  Función: test_database_error_handling
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_hitl_supervisor.py:202
+  Función: test_creative_prompt_building
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_multi_llm_integration.py:44
+  Función: redis_client
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_multi_llm_integration.py:45
+  Función: redis_client
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_multi_llm_integration.py:233
+  Función: test_memory_integration
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_multi_llm_integration.py:240
+  Función: test_memory_integration
+  Problema: get() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_multi_llm_integration.py:353
+  Función: run_integration_tests
+  Problema: delete() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/tests/test_wal_integration.py:131
+  Función: None
+  Problema: create_task() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/userbot.py:68
+  Función: start
+  Problema: create_task() probablemente necesita await
+
+[HIGH] /home/rober/projects/chatbot_nadia/userbot.py:300
+  Función: _handle_fast_path
+  Problema: get() probablemente necesita await
+
+[MEDIUM] /home/rober/projects/chatbot_nadia/scripts/audit_async_sync.py:115
+  Función: N/A
+  Problema: Threading importado en código async
+

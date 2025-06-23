@@ -17,6 +17,7 @@ from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
 from utils.typing_simulator import TypingSimulator
+from utils.user_activity_tracker import UserActivityTracker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ class UserBot:
         
         # Typing simulation
         self.typing_simulator = None  # Will be initialized after client start
+        
+        # Adaptive Window Message Pacing
+        self.activity_tracker = None  # Will be initialized after client start
 
     # ────────────────────────────────
     # Redis Helpers
@@ -69,14 +73,26 @@ class UserBot:
         await self.client.start(phone=self.config.phone_number)
         await self.db_manager.initialize()  # NUEVO: Initialize database
         self.typing_simulator = TypingSimulator(self.client)  # Initialize typing simulator
+        self.activity_tracker = UserActivityTracker(self.redis_url, self.config)  # Initialize activity tracker
         logger.info("Bot started successfully")
+        
+        if self.config.enable_typing_pacing:
+            logger.info("Adaptive Window Message Pacing enabled")
+        else:
+            logger.info("Adaptive Window Message Pacing disabled - using original processing")
 
         wal_worker = asyncio.create_task(self._process_wal_queue())
         approved_worker = asyncio.create_task(self._process_approved_messages())
 
         @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
         async def _(event):  # noqa: D401,  WPS122
-            await self._enqueue_message(event)
+            await self._handle_incoming_message(event)
+        
+        # Add typing event handler for adaptive window pacing
+        @self.client.on(events.ChatAction(func=lambda e: e.is_private))
+        async def handle_typing(event):  # noqa: D401,  WPS122
+            if self.activity_tracker:
+                await self.activity_tracker.handle_typing_event(event)
 
         try:
             await self.client.run_until_disconnected()
@@ -88,9 +104,25 @@ class UserBot:
                 await approved_worker
             await self.memory.close()
             await self.db_manager.close()  # NUEVO: Close database
+            if self.activity_tracker:
+                await self.activity_tracker.close()  # Close activity tracker
 
     # ────────────────────────────────
-    # WAL Enqueue
+    # Message Handling with Adaptive Window
+    # ────────────────────────────────
+    async def _handle_incoming_message(self, event):
+        """Handle incoming message with adaptive window logic or fallback to original."""
+        if self.config.enable_typing_pacing and self.activity_tracker:
+            # Try adaptive window processing
+            handled = await self.activity_tracker.handle_message(event, self._enqueue_message)
+            if handled:
+                return  # Successfully handled by adaptive window
+        
+        # Fallback to original processing
+        await self._enqueue_message(event)
+    
+    # ────────────────────────────────
+    # WAL Enqueue (Original)
     # ────────────────────────────────
     async def _enqueue_message(self, event):
         """Adds message to WAL before processing."""

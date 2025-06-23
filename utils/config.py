@@ -36,6 +36,14 @@ class Config:
     # Legacy OpenAI config (for backward compatibility)
     openai_model: str = "gpt-3.5-turbo"
     
+    # Adaptive Window Message Pacing
+    enable_typing_pacing: bool = False
+    typing_window_delay: float = 1.5
+    typing_debounce_delay: float = 5.0
+    min_batch_size: int = 2
+    max_batch_size: int = 5
+    max_batch_wait_time: float = 30.0
+    
     # opcionales / con default
     debug: bool = False
     log_level: str = "INFO"
@@ -63,6 +71,14 @@ class Config:
             llm1_model=os.getenv("LLM1_MODEL", "gemini-2.0-flash-exp"),
             llm2_provider=os.getenv("LLM2_PROVIDER", "openai"),
             llm2_model=os.getenv("LLM2_MODEL", "gpt-4o-mini"),
+            
+            # Adaptive Window Message Pacing configuration
+            enable_typing_pacing=os.getenv("ENABLE_TYPING_PACING", "false").lower() == "true",
+            typing_window_delay=float(os.getenv("TYPING_WINDOW_DELAY", "1.5")),
+            typing_debounce_delay=float(os.getenv("TYPING_DEBOUNCE_DELAY", "5.0")),
+            min_batch_size=int(os.getenv("MIN_BATCH_SIZE", "2")),
+            max_batch_size=int(os.getenv("MAX_BATCH_SIZE", "5")),
+            max_batch_wait_time=float(os.getenv("MAX_BATCH_WAIT_TIME", "30.0")),
             
             # Legacy and optional
             openai_model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
