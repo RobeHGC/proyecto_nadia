@@ -36,6 +36,20 @@ logs.md
 # Session files
 bot_session.session
 *.session
+*.session-journal
+
+# Security - sensitive files
+*.log
+*.key
+*.pem
+*.p12
+credentials.*
+secrets.*
+
+# Database backups with potentially sensitive data
+backups/*.sql
+backups/*.sql.gz
+backups/*.sql.gz.meta
 
 # Architecture docs (keep local)
 ARCHITECTURE.md
