@@ -1,9 +1,10 @@
 # dashboard/backend/static_server.py
 """Simple static file server for the HITL dashboard."""
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Create FastAPI app for serving dashboard
@@ -29,6 +30,29 @@ async def get_app_js():
 async def get_styles_css():
     """Serve the styles.css file"""
     return FileResponse(str(frontend_dir / "styles.css"))
+
+@app.get("/data-analytics.html")
+async def get_data_analytics():
+    """Serve the data-analytics.html file"""
+    return FileResponse(str(frontend_dir / "data-analytics.html"))
+
+@app.get("/data-analytics.js")
+async def get_data_analytics_js():
+    """Serve the data-analytics.js file"""
+    return FileResponse(str(frontend_dir / "data-analytics.js"))
+
+@app.get("/index.html")
+async def get_index():
+    """Serve the index.html file for 'Back to Dashboard' button"""
+    return FileResponse(str(frontend_dir / "index.html"))
+
+@app.get("/api/config")
+async def get_config():
+    """Serve configuration for frontend"""
+    return JSONResponse({
+        "apiKey": os.getenv("DASHBOARD_API_KEY", "miclavesegura45mil"),
+        "apiBase": "http://localhost:8000"
+    })
 
 if __name__ == "__main__":
     import uvicorn

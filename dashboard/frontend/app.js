@@ -2,7 +2,7 @@
 class HITLDashboard {
     constructor() {
         this.apiBase = 'http://localhost:8000';
-        this.apiKey = 'miclavesegura45mil'; // Must match DASHBOARD_API_KEY in .env
+        this.apiKey = null; // Will be loaded from server
         this.currentReview = null;
         this.selectedTags = [];
         this.qualityScore = 3;
@@ -43,7 +43,27 @@ class HITLDashboard {
         };
     }
     
+    async loadConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (response.ok) {
+                const config = await response.json();
+                this.apiKey = config.apiKey;
+                this.apiBase = config.apiBase;
+            } else {
+                // Fallback - should not be needed in production
+                console.warn('Failed to load config from server, this is a security issue');
+                this.apiKey = 'dev-fallback-key';
+            }
+        } catch (error) {
+            console.error('Failed to load config from server:', error);
+            this.apiKey = 'dev-fallback-key';
+        }
+    }
+    
     async init() {
+        // Load configuration from server first
+        await this.loadConfig();
         await this.loadEditTaxonomy();
         await this.loadMetrics();
         await this.loadReviews();
@@ -90,6 +110,12 @@ class HITLDashboard {
             document.getElementById('avg-review-time').textContent = avgTimeFormatted;
             
             // Update multi-LLM metrics
+            console.log('Metrics received:', {
+                quota_used: metrics.gemini_quota_used_today,
+                quota_total: metrics.gemini_quota_total,
+                savings: metrics.savings_today_usd,
+                all_metrics: metrics
+            });
             this.updateQuotaDisplay(metrics.gemini_quota_used_today, metrics.gemini_quota_total);
             this.updateSavingsDisplay(metrics.savings_today_usd);
         } catch (error) {
@@ -622,8 +648,12 @@ class HITLDashboard {
     }
     
     updateQuotaDisplay(used, total) {
-        const percentage = (used / total) * 100;
-        const quotaText = `${used.toLocaleString()} / ${total.toLocaleString()}`;
+        // Sanitize input values
+        const safeUsed = isNaN(used) || !isFinite(used) ? 0 : Math.max(0, used);
+        const safeTotal = isNaN(total) || !isFinite(total) || total <= 0 ? 32000 : total;
+        
+        const percentage = Math.min(100, (safeUsed / safeTotal) * 100);
+        const quotaText = `${safeUsed.toLocaleString()} / ${safeTotal.toLocaleString()}`;
         
         document.getElementById('gemini-quota').textContent = `${percentage.toFixed(1)}%`;
         document.getElementById('quota-text').textContent = quotaText;

@@ -21,6 +21,7 @@ from llms.quota_manager import GeminiQuotaManager
 from llms.model_registry import get_model_registry
 from llms.dynamic_router import get_dynamic_router
 from utils.config import Config
+from .data_analytics import analytics_manager, AnalyticsDataRequest, BackupRequest, CleanDataRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -207,7 +208,10 @@ async def get_reviews_from_redis(limit: int = 20) -> List[ReviewResponse]:
         return []
 
 # Simple API key authentication
-API_KEY = os.getenv("DASHBOARD_API_KEY", "dev-key-change-in-production")
+API_KEY = os.getenv("DASHBOARD_API_KEY")
+if not API_KEY:
+    logger.error("DASHBOARD_API_KEY environment variable is required!")
+    raise ValueError("DASHBOARD_API_KEY must be set in environment variables")
 
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify API key for dashboard access."""
@@ -1353,6 +1357,144 @@ async def get_customer_status(
     except Exception as e:
         logger.error(f"Error getting customer status for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get customer status")
+
+
+# =================== DATA ANALYTICS ENDPOINTS ===================
+
+@app.get("/api/analytics/data")
+@limiter.limit("30/minute")
+async def get_analytics_data(
+    request: Request,
+    page: int = Query(1, ge=1, le=1000),
+    limit: int = Query(50, ge=10, le=500),
+    sort_by: str = Query("created_at", pattern="^[a-zA-Z_][a-zA-Z0-9_]*$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    search: Optional[str] = Query(None, max_length=200),
+    date_from: Optional[str] = Query(None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$"),
+    date_to: Optional[str] = Query(None, pattern="^(\\d{4}-\\d{2}-\\d{2}|)$"),
+    user_id: Optional[str] = Query(None, max_length=50),
+    _: Optional[str] = Query(None, description="Cache buster parameter"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get paginated analytics data with filtering and sorting."""
+    params = AnalyticsDataRequest(
+        page=page,
+        limit=limit,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        user_id=user_id
+    )
+    return await analytics_manager.get_analytics_data(params)
+
+
+@app.get("/api/analytics/metrics")
+@limiter.limit("60/minute")
+async def get_analytics_metrics(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get aggregated metrics for dashboard charts."""
+    return await analytics_manager.get_analytics_metrics()
+
+
+@app.post("/api/analytics/backup")
+@limiter.limit("5/minute")
+async def create_backup(
+    request: Request,
+    backup_request: BackupRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Create a database backup."""
+    return await analytics_manager.create_backup(backup_request)
+
+
+@app.get("/api/analytics/backups")
+@limiter.limit("30/minute")
+async def list_backups(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """List all available backups."""
+    return await analytics_manager.list_backups()
+
+
+@app.post("/api/analytics/restore/{backup_id}")
+@limiter.limit("2/minute")
+async def restore_backup(
+    request: Request,
+    backup_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Restore from a specific backup."""
+    return await analytics_manager.restore_backup(backup_id)
+
+
+@app.post("/api/analytics/clean")
+@limiter.limit("5/minute")
+async def clean_data(
+    request: Request,
+    clean_request: CleanDataRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Clean data with specified filters."""
+    return await analytics_manager.clean_data(clean_request)
+
+
+@app.get("/api/analytics/export")
+@limiter.limit("10/minute")
+async def export_data(
+    request: Request,
+    format: str = Query("csv", pattern="^(csv|json|xlsx)$"),
+    date_from: Optional[str] = Query(None, pattern="^\\d{4}-\\d{2}-\\d{2}$"),
+    date_to: Optional[str] = Query(None, pattern="^\\d{4}-\\d{2}-\\d{2}$"),
+    user_id: Optional[str] = Query(None, max_length=50),
+    api_key: str = Depends(verify_api_key)
+):
+    """Export data in specified format."""
+    filters = {}
+    if date_from:
+        filters['date_from'] = date_from
+    if date_to:
+        filters['date_to'] = date_to
+    if user_id:
+        filters['user_id'] = user_id
+    
+    return await analytics_manager.export_data(format, filters)
+
+
+@app.get("/api/analytics/raw/{message_id}")
+@limiter.limit("30/minute")
+async def get_raw_interaction(
+    request: Request,
+    message_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get raw interaction data directly from PostgreSQL without transformations.
+    
+    This endpoint returns the EXACT database record for debugging purposes.
+    Includes schema information and column names for verification.
+    """
+    return await analytics_manager.get_raw_interaction(message_id)
+
+
+@app.get("/api/analytics/integrity")
+@limiter.limit("10/minute")
+async def get_data_integrity_report(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get comprehensive data integrity report.
+    
+    Returns:
+    - Schema validation (expected vs actual fields)
+    - Data quality metrics (null values, inconsistencies)
+    - Integrity alerts and recommendations
+    - List of data transformations applied
+    """
+    return await analytics_manager.get_data_integrity_report()
 
 
 if __name__ == "__main__":
