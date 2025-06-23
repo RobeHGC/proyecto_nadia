@@ -246,10 +246,13 @@ class SupervisorAgent:
         messages, stable_tokens = self.prefix_manager.build_messages_for_cache(
             user_context=context,
             conversation_summary=conversation_summary,
-            current_message=f"Refine this response into bubbles: {raw_response}"
+            current_message=raw_response  # Solo el contenido, sin instrucciones mixtas
         )
         
         logger.info(f"Stable prefix: {stable_tokens} tokens")
+        
+        # DEBUG: Log exact prompt sent to GPT-4o-nano
+        logger.debug(f"PROMPT ENVIADO A GPT-4o-nano:\n{messages}")
         
         # Llamar a GPT-4o-nano
         refined = await self.llm2.generate_response(

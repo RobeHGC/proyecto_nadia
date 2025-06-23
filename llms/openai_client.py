@@ -68,14 +68,27 @@ class OpenAIClient(BaseLLMClient):
                 prompt_tokens = response.usage.prompt_tokens
                 completion_tokens = response.usage.completion_tokens
                 self._last_tokens_used = response.usage.total_tokens
-                self._last_cost = self._calculate_cost(prompt_tokens, completion_tokens)
+                
+                # Track cache ratio for GPT-4.1-nano prompt caching
+                cached_tokens = 0
+                if hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details:
+                    if hasattr(response.usage.prompt_tokens_details, 'cached_tokens'):
+                        cached_tokens = response.usage.prompt_tokens_details.cached_tokens or 0
+                
+                self._last_cache_ratio = cached_tokens / prompt_tokens if prompt_tokens > 0 else 0.0
+                self._last_cost = self._calculate_cost_with_cache(prompt_tokens, completion_tokens, cached_tokens)
             
             content = response.choices[0].message.content
             if content is None:
                 logger.warning("OpenAI returned None content")
                 return "Lo siento, no pude generar una respuesta."
             
-            logger.info(f"OpenAI response generated. Model: {self.model}, Tokens: {self._last_tokens_used}, Cost: ${self._last_cost:.6f}")
+            # Enhanced logging with cache info
+            cache_info = ""
+            if hasattr(self, '_last_cache_ratio'):
+                cache_info = f", Cache: {self._last_cache_ratio:.1%}"
+            
+            logger.info(f"OpenAI response generated. Model: {self.model}, Tokens: {self._last_tokens_used}, Cost: ${self._last_cost:.6f}{cache_info}")
             
             return content.strip()
 
@@ -123,3 +136,39 @@ class OpenAIClient(BaseLLMClient):
         output_cost = (completion_tokens / 1000) * pricing["output"]
         
         return input_cost + output_cost
+    
+    def _calculate_cost_with_cache(self, prompt_tokens: int, completion_tokens: int, cached_tokens: int) -> float:
+        """
+        Calculate cost with prompt caching discount.
+        
+        Args:
+            prompt_tokens: Total input tokens
+            completion_tokens: Output tokens
+            cached_tokens: Cached input tokens (75% discount)
+            
+        Returns:
+            Cost in USD
+        """
+        if self.model not in self.PRICING:
+            logger.warning(f"Unknown model pricing for {self.model}, using gpt-3.5-turbo rates")
+            pricing = self.PRICING["gpt-3.5-turbo"]
+        else:
+            pricing = self.PRICING[self.model]
+        
+        # Calculate non-cached tokens
+        non_cached_tokens = prompt_tokens - cached_tokens
+        
+        # Cost for non-cached tokens at full rate
+        non_cached_cost = (non_cached_tokens / 1000) * pricing["input"]
+        
+        # Cost for cached tokens at discounted rate (if available)
+        if "cached_input" in pricing:
+            cached_cost = (cached_tokens / 1000) * pricing["cached_input"]
+        else:
+            # Fallback: 75% discount on regular price
+            cached_cost = (cached_tokens / 1000) * pricing["input"] * 0.25
+        
+        # Output cost (no cache discount)
+        output_cost = (completion_tokens / 1000) * pricing["output"]
+        
+        return non_cached_cost + cached_cost + output_cost
