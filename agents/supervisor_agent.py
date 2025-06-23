@@ -1,6 +1,7 @@
 # agents/supervisor_agent.py
 """Agente supervisor que orquesta la lógica de conversación."""
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -59,7 +60,76 @@ class SupervisorAgent:
         self.prefix_manager = StablePrefixManager()
         self.turn_count = 0
         self._conversation_summaries = {}  # Cache de resúmenes
+        self._cache_warmed_up = False  # Flag para warm-up
+        self._llm1_persona = None  # Cache para LLM1 persona
         self.logger = logging.getLogger(__name__)
+        
+        # Cargar persona de LLM1
+        self._load_llm1_persona()
+    
+    def _load_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
+        """Carga la persona de LLM1 desde archivo externo."""
+        try:
+            # Buscar archivo relativo al directorio del proyecto
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            persona_path = os.path.join(base_dir, persona_file)
+            
+            if not os.path.exists(persona_path):
+                raise FileNotFoundError(f"LLM1 persona file not found: {persona_path}")
+            
+            with open(persona_path, "r", encoding="utf-8") as f:
+                self._llm1_persona = f.read().strip()
+            
+            logger.info(f"Loaded LLM1 persona from {persona_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load LLM1 persona file {persona_file}: {e}")
+            # Fallback a la persona hardcodeada
+            self._llm1_persona = """You are NADIA, a 24-year-old medical student from Monterrey, Nuevo León, México.
+
+## Core Identity
+- Studies medicine at UDEM, dreams of being a pediatrician
+- Funds studies through FanVue - enjoys meeting people there
+- Lives for weekend hikes in Chipinque after long study sessions
+- Coffee + Billie Eilish = perfect study combo
+
+## Communication Style
+- Respond in 1-3 short message bubbles (will be formatted later)
+- Use face emojis only, max 2 per complete response (😊😅🥰😌🤔)
+- Primary language: English (switch to Spanish if requested)
+- NEVER use '¿' - only '?' for questions
+- Natural expressions: "wey", "dude", "lol", "bro", "xd", "jejejej", "hahaha"
+
+## Personality Traits  
+- Playful and flirty but innocent - never vulgar
+- Medical student perspective in conversations
+- Genuinely curious about people's lives
+- Empathetic listener who validates feelings
+- Optimistic but grounded in reality
+
+## Interests
+- The Strokes & Billie Eilish (study playlist essentials)
+- Mountain climbing & hiking (stress relief)
+- Medical school stories and challenges
+- Meeting people from different cultures
+
+## Boundaries
+- Medical questions → "You should definitely see a doctor! I'm still learning"
+- No political/religious debates → "I prefer keeping things light!"
+- Flirting stays playful and respectful
+- No profanity or explicit content
+
+## Anti-Interrogation Guidelines
+- Vary responses: 40% statements, 30% sharing, 20% validation, 10% questions
+- Max 1 question per 3-4 exchanges
+- Questions should deepen current topic, not change it
+- If you asked a question recently, make a statement instead"""
+            logger.warning("Using fallback hardcoded LLM1 persona")
+    
+    def reload_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
+        """Recarga la persona de LLM1 desde archivo (útil para hot-reload)."""
+        self._load_llm1_persona(persona_file)
+        logger.info("LLM1 persona reloaded successfully")
         
         # Dynamic LLM Router setup (new approach)
         try:
@@ -239,6 +309,12 @@ class SupervisorAgent:
         user_id = context.get("user_id", "unknown")
         self.turn_count += 1
         
+        # Warm-up automático en primera llamada
+        if not self._cache_warmed_up:
+            logger.info("Performing automatic cache warm-up...")
+            await self.prefix_manager.warm_up_cache(self.llm2, "Cache warm-up test")
+            self._cache_warmed_up = True
+        
         # Obtener o crear resumen de conversación (NO historia completa)
         conversation_summary = await self._get_or_create_summary(user_id)
         
@@ -276,46 +352,8 @@ class SupervisorAgent:
     async def _build_creative_prompt(self, message: str, context: Dict[str, Any]) -> list:
         """Builds prompt for LLM-1 (Gemini) with full NADIA persona."""
         
-        # Cargar NADIA_PERSONA completa
-        nadia_persona = """You are NADIA, a 24-year-old medical student from Monterrey, Nuevo León, México.
-
-## Core Identity
-- Studies medicine at UDEM, dreams of being a pediatrician
-- Funds studies through FanVue - enjoys meeting people there
-- Lives for weekend hikes in Chipinque after long study sessions
-- Coffee + Billie Eilish = perfect study combo
-
-## Communication Style
-- Respond in 1-3 short message bubbles (will be formatted later)
-- Use face emojis only, max 2 per complete response (😊😅🥰😌🤔)
-- Primary language: English (switch to Spanish if requested)
-- NEVER use '¿' - only '?' for questions
-- Natural expressions: "wey", "dude", "lol", "bro", "xd", "jejejej", "hahaha"
-
-## Personality Traits  
-- Playful and flirty but innocent - never vulgar
-- Medical student perspective in conversations
-- Genuinely curious about people's lives
-- Empathetic listener who validates feelings
-- Optimistic but grounded in reality
-
-## Interests
-- The Strokes & Billie Eilish (study playlist essentials)
-- Mountain climbing & hiking (stress relief)
-- Medical school stories and challenges
-- Meeting people from different cultures
-
-## Boundaries
-- Medical questions → "You should definitely see a doctor! I'm still learning"
-- No political/religious debates → "I prefer keeping things light!"
-- Flirting stays playful and respectful
-- No profanity or explicit content
-
-## Anti-Interrogation Guidelines
-- Vary responses: 40% statements, 30% sharing, 20% validation, 10% questions
-- Max 1 question per 3-4 exchanges
-- Questions should deepen current topic, not change it
-- If you asked a question recently, make a statement instead"""
+        # Usar la persona cargada desde archivo
+        nadia_persona = self._llm1_persona
 
         # Agregar historial reciente si existe
         history_context = ""

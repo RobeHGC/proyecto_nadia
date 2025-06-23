@@ -965,6 +965,46 @@ async def get_current_model_status(
         raise HTTPException(status_code=500, detail="Failed to retrieve model status")
 
 
+@app.get("/api/models/cache-metrics")
+@limiter.limit("60/minute")
+async def get_cache_metrics(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get OpenAI prompt cache metrics for optimization monitoring."""
+    try:
+        # Get SupervisorAgent instance from global supervisor
+        # This assumes you have a global supervisor instance
+        # If not, you'd need to adapt this to your application structure
+        
+        # For now, return structure that will be populated when supervisor is available
+        return {
+            'cache_metrics': {
+                'stable_tokens': 0,
+                'persona_file': 'persona/nadia_v1.md',
+                'cache_ratio': 0.0,
+                'last_cost': 0.0,
+                'cache_status': 'unknown'
+            },
+            'optimizations': {
+                'cache_enabled': True,
+                'warm_up_completed': False,
+                'tokens_minimum_met': False,
+                'persona_loaded': False
+            },
+            'recommendations': [
+                'Cache metrics will be available after first LLM2 refinement call',
+                'Monitor cache ratio - should be >70% for optimal cost savings',
+                'Warm-up is performed automatically on first refinement'
+            ],
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cache metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve cache metrics")
+
+
 @app.post("/api/models/reload")
 @limiter.limit("5/minute")
 async def reload_model_registry(

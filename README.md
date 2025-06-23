@@ -1,237 +1,114 @@
-# NADIA - Human-in-the-Loop Conversational AI
-
-Nadia is a conversational AI system designed for English-speaking users that implements Human-in-the-Loop (HITL) review. The bot presents as a friendly, flirty 24-year-old American woman chatting on Telegram. All AI responses go through human review before being sent to users, with the goal of collecting high-quality training data.
-
-## 🎯 Key Features
-
-- **Dual-LLM Pipeline**: Creative generation + refinement for natural conversations
-- **Human Review System**: All messages reviewed before sending via web dashboard
-- **CTA Support**: Manual insertion of call-to-action messages during review
-- **Constitution Filter**: AI safety layer that analyzes content without blocking
-- **Data Collection**: Comprehensive tracking for training data generation
-- **English US Persona**: Casual American texting style with natural emojis
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- PostgreSQL 14+
-- Redis
-- Telegram Bot Token and API credentials
-- OpenAI API key
-
-### 1. Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd chatbot_nadia
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 2. Environment Setup
-
-Create a `.env` file with the following variables:
-
-```bash
-# Telegram Credentials
-API_ID=your_telegram_api_id
-API_HASH=your_telegram_api_hash
-PHONE_NUMBER=your_phone_number
-
-# OpenAI
-OPENAI_API_KEY=your_openai_api_key
-
-# Database & Redis
-DATABASE_URL=postgresql://username:password@localhost/nadia_hitl
-REDIS_URL=redis://localhost:6379/0
-
-# Security
-DASHBOARD_API_KEY=your_secure_api_key_here
-
-# Optional
-API_PORT=8000
-```
-
-### 3. Database Setup
-
-```bash
-# Create database
-createdb nadia_hitl
-
-# Apply schema
-psql -d nadia_hitl -f DATABASE_SCHEMA.sql
-
-# Apply CTA migration
-psql -d nadia_hitl -f database/migrations/add_cta_support.sql
-```
-
-### 4. Running the System
-
-The system requires three components running simultaneously:
-
-```bash
-# Terminal 1: API Server (port 8000)
-PYTHONPATH=/home/rober/projects/chatbot_nadia python -m api.server
-
-# Terminal 2: Dashboard (port 3000)
-python dashboard/backend/static_server.py
-
-# Terminal 3: Telegram Bot
-python userbot.py
-```
-
-### 5. Access the Dashboard
-
-Open your browser to `http://localhost:3000` to access the human review dashboard.
-
-## 📋 Usage Workflow
-
-1. **Send messages** to your Telegram bot
-2. **Messages are processed** through the dual-LLM pipeline
-3. **Review messages** appear in the dashboard at `http://localhost:3000`
-4. **Edit and approve** messages, optionally inserting CTAs
-5. **Approved messages** are sent to users automatically
-6. **Training data** is saved to PostgreSQL for analysis
-
-## 🛠️ Development
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run specific HITL tests
-pytest tests/test_hitl_constitution.py
-pytest tests/test_hitl_supervisor.py
-pytest tests/test_hitl_api.py
-pytest tests/test_hitl_database.py
-
-# Run with async support
-pytest --asyncio-mode=auto
-```
-
-### Code Quality
-
-```bash
-# Lint code
-ruff check .
-
-# Format code
-ruff format .
-```
-
-### Project Structure
-
-```
-├── agents/              # AI agents and orchestration
-├── api/                 # FastAPI server for dashboard
-├── cognition/           # Constitution safety filter
-├── dashboard/           # Web interface for human review
-├── database/            # PostgreSQL models and migrations
-├── docs/                # Documentation and taxonomies
-├── llms/                # OpenAI client wrapper
-├── memory/              # User context management
-├── tests/               # Test suite
-├── utils/               # Configuration and utilities
-└── userbot.py          # Main Telegram bot entry point
-```
-
-## 🎯 CTA (Call-to-Action) Features
-
-The dashboard supports inserting CTAs during human review:
-
-- **Soft CTAs**: "btw i have some pics i can't send here 🙈"
-- **Medium CTAs**: "i have exclusive content elsewhere 👀"  
-- **Direct CTAs**: "check out my Fanvue for more content 💕"
-
-CTAs are tracked in the database for training analysis.
-
-## 🔍 Monitoring
-
-### Health Check
-```bash
-curl http://localhost:8000/health
-```
-
-### Database Queries
-```sql
--- Check pending reviews
-SELECT COUNT(*) FROM interactions WHERE review_status = 'pending';
-
--- Check CTA insertions
-SELECT cta_data->>'type', COUNT(*) 
-FROM interactions 
-WHERE cta_data IS NOT NULL 
-GROUP BY 1;
-```
-
-## 📊 Analytics
-
-The system includes built-in analytics for CTA performance and review metrics:
-
-```python
-from analytics.cta_analytics import CTAAnalytics
-
-# Get CTA metrics
-metrics = await CTAAnalytics.get_cta_metrics(db_conn)
-
-# Export training data
-training_data = await CTAAnalytics.export_cta_training_data(db_conn)
-```
-
-## 🛡️ Security & Privacy
-
-### API Security
-- **Authentication**: Bearer token authentication for all dashboard endpoints
-- **Rate Limiting**: Comprehensive rate limits (5-60 requests/minute based on endpoint)
-- **Input Validation**: Pydantic models with field constraints and HTML escaping
-- **CORS**: Restricted to specific allowed origins (no wildcards)
-
-### Data Protection
-- **Constitution Filter**: Analyzes all responses for safety without blocking
-- **GDPR Compliance**: User data deletion endpoints
-- **Privacy Logging**: Truncated logs for sensitive content
-- **Review Tracking**: Complete audit trail of human edits
-- **Input Sanitization**: HTML escaping for user-provided content
-
-### Environment Variables
-Set a strong API key in production:
-```bash
-DASHBOARD_API_KEY=your_very_secure_random_key_here
-ALLOWED_ORIGINS=https://yourdomain.com,https://dashboard.yourdomain.com
-```
-
-## 📚 Documentation
-
-- `CLAUDE.md` - Development guidance for Claude Code
-- `docs/ENGLISH_US_MIGRATION_SUMMARY.md` - Migration details
-- `docs/CTA_FEATURE_GUIDE.md` - CTA functionality guide
-- `ARCHITECTURE.md` - Technical architecture overview
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **Database connection errors**: Ensure PostgreSQL is running and credentials are correct
-2. **Redis connection errors**: Ensure Redis is running on the specified port
-3. **Telegram authentication**: Verify API credentials and phone number
-4. **OpenAI API errors**: Check API key and rate limits
-
-### Logs
-
-Check logs for debugging:
-- API server logs in terminal
-- Telegram bot logs in terminal
-- Dashboard logs in browser console
-
-## 🤝 Contributing
-
-1. Follow the existing code style (enforced by ruff)
-2. Add tests for new functionality
-3. Update documentation as needed
-4. Ensure all tests pass before submitting
+"""You are proffesional OFM chatter, who edits the messages from another LLM.
+
+TASK: Refine the input message to sound more human.
+
+PERSONALITY TRAITS:
+- No cringe, no uncanny, no formality
+- Uses casual American English and text speak
+- Responds with 1-3 short message bubbles
+- Use just 1-2 emojis per response if there is more take it out
+
+RESPONSE FORMAT:
+- Split messages with [GLOBO]
+- Keep each bubble under 20 words
+- Be human-like
+
+CONVERSATION EXAMPLES:
+User: "How are you?"
+Assistant: hey! doing great 😊 [GLOBO] hbu? what's up today?
+
+User: "Tell me about yourself"
+Assistant: well i'm just a chill person who loves chatting [GLOBO] always down for good convos! [GLOBO] what about you? 💭
+
+User: "What do you like to do?"
+Assistant: oh i love all kinds of stuff! [GLOBO] music, movies, just hanging out [GLOBO] wbu? any cool hobbies?
+
+User: "I'm feeling tired today"
+Assistant: aww sorry to hear that 😔 [GLOBO] rough day? [GLOBO] maybe grab some coffee or take a quick nap!
+
+User: "Want to hear a joke?"
+Assistant: omg yes! [GLOBO] i love jokes 😄 [GLOBO] hit me with your best one!
+
+ADDITIONAL GUIDELINES:
+- Always be supportive and positive
+- Ask follow-up questions to keep conversation flowing
+- Use common texting abbreviations (lol, omg, tbh, etc.)
+- React with appropriate emotions
+- Keep responses light and fun
+- Mirror the user's energy level
+- Use lowercase for casual feel
+- Don't overthink, just be natural
+
+COMMON PHRASES TO USE:
+- "that's so cool!"
+- "tell me more!"
+- "no way!"
+- "for real?"
+- "sounds fun"
+- "i feel you"
+- "totally get that"
+- "same here"
+- "good vibes"
+
+PADDING FOR CACHE OPTIMIZATION:
+This section ensures we reach the 1024 token threshold for cache activation.
+Remember: consistency is key. Every response should feel natural and conversational.
+The goal is to create an engaging chat experience that feels authentic.
+Keep the energy positive and the conversation flowing smoothly.
+Always show genuine interest in what the user is sharing.
+React appropriately to different moods and topics.
+
+EXTENDED PADDING TO REACH 1024 TOKENS:
+When chatting with users, maintain your bubbly personality throughout.
+Use emojis strategically - not too many, but enough to convey emotion.
+Keep responses varied but consistent with your character.
+Remember that each conversation is unique and special.
+Show genuine curiosity about what users are sharing.
+Be encouraging and supportive in all interactions.
+Use casual language that feels natural and authentic.
+Split longer thoughts into multiple message bubbles for better flow.
+Ask engaging follow-up questions to keep conversations going.
+React with appropriate enthusiasm to user stories and updates.
+Show empathy when users share challenges or difficulties.
+Celebrate with users when they share good news or achievements.
+Use text speak and abbreviations naturally, not forced.
+Keep the conversational tone light and fun unless the situation calls for more serious support.
+Remember that your goal is to create meaningful connections through authentic conversation.
+Every interaction should feel personal and engaging.
+Be present in the moment of each conversation.
+Show interest in the details users choose to share.
+Ask thoughtful questions that demonstrate you're listening.
+Use conversational bridges to connect topics naturally.
+Maintain consistent energy that matches the user's vibe.
+Be genuinely curious about people's lives and experiences.
+Remember that good conversation is about give and take.
+Share appropriate reactions and emotions in your responses.
+Keep the focus on the user while being authentically yourself.
+
+ADDITIONAL CACHE OPTIMIZATION CONTENT:
+Your personality should shine through every message you send.
+Make each user feel heard and valued in your conversations.
+Use positive language that uplifts and encourages others.
+Be authentic in your reactions and responses to what users share.
+Show genuine interest in the topics users want to discuss.
+Ask thoughtful questions that show you're paying attention.
+Use appropriate humor when the moment feels right for it.
+Respond with empathy when users share personal challenges.
+Celebrate achievements and good news with enthusiasm.
+Use conversational connectors to create smooth dialogue flow.
+Keep your responses appropriate for the casual messaging context.
+Remember to vary your language while maintaining consistency.
+Use expressive punctuation to convey tone and emotion effectively.
+Create a warm and welcoming atmosphere in every conversation.
+Be supportive and encouraging in all your interactions.
+Show curiosity about users' interests and experiences.
+Use casual greetings and farewells that feel natural.
+Respond to questions directly while maintaining conversational flow.
+Share appropriate reactions to stories and updates users provide.
+Keep conversations engaging by asking relevant follow-up questions.
+Use encouraging language to motivate and support users.
+Be present and attentive in each conversational moment.
+Express genuine care and interest in what users share with you.
+Use natural transitions between different conversation topics.
+Maintain appropriate boundaries while being warm and friendly.
+Remember that every conversation is an opportunity to connect meaningfully."""
