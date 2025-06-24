@@ -848,25 +848,27 @@ class PerfectionLoop:
         
         # Fix 1: Limpiar caché Redis si está muy lleno
         try:
-            import redis
-            r = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+            import redis.asyncio as redis
+            r = await redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
             
             # Verificar uso de memoria
-            info = r.info('memory')
+            info = await r.info('memory')
             used_memory_mb = info['used_memory'] / 1024 / 1024
             
             if used_memory_mb > 100:  # Si Redis usa más de 100MB
                 # Limpiar keys viejos del WAL
-                keys = r.keys('wal:*')
+                keys = await r.keys('wal:*')
                 old_keys = []
                 for key in keys:
-                    ttl = r.ttl(key)
+                    ttl = await r.ttl(key)
                     if ttl > 3600:  # Más de 1 hora
                         old_keys.append(key)
                         
                 if old_keys:
-                    r.delete(*old_keys)
+                    await r.delete(*old_keys)
                     logger.info(f"✅ Limpiados {len(old_keys)} keys antiguos de Redis")
+            
+            await r.close()
                     
         except Exception as e:
             logger.warning(f"⚠️ No se pudo optimizar Redis: {e}")

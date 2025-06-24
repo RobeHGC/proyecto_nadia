@@ -92,8 +92,8 @@ class UserBot:
         else:
             logger.info("Adaptive Window Message Pacing disabled - using original processing")
 
-        wal_worker = asyncio.create_task(self._process_wal_queue())
-        approved_worker = asyncio.create_task(self._process_approved_messages())
+        self.wal_task = asyncio.create_task(self._process_wal_queue())
+        self.approved_task = asyncio.create_task(self._process_approved_messages())
 
         @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
         async def _(event):  # noqa: D401,  WPS122
@@ -108,11 +108,11 @@ class UserBot:
         try:
             await self.client.run_until_disconnected()
         finally:
-            wal_worker.cancel()
-            approved_worker.cancel()
+            self.wal_task.cancel()
+            self.approved_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await wal_worker
-                await approved_worker
+                await self.wal_task
+                await self.approved_task
             await self.memory.close()
             await self.db_manager.close()  # NUEVO: Close database
             if self.activity_tracker:

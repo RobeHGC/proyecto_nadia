@@ -6,7 +6,7 @@ Guidance for Claude Code when working with NADIA HITL system.
 
 NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 24yo American woman. All responses require human review before sending.
 
-## System Status: PRODUCTION READY ✅ (Jun 27, 2025 - 4:00 PM)
+## System Status: PRODUCTION READY ✅ (Jun 27, 2025 - 6:30 PM)
 
 ### Architecture
 1. **Pipeline**: Telegram → UserBot → Redis WAL → Multi-LLM → Human Review → Send
@@ -15,12 +15,27 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 4. **Context**: 50 messages per user stored in Redis (7-day expiration)
 5. **Debouncing**: 60-second delay for message batching
 
-### Recent Updates (Jun 27 - Session 2)
+### Recent Updates (Jun 27 - Session 3 FINAL)
+- ✅ **ENTITY RESOLUTION SYSTEM**: Implemented proactive entity pre-resolution to eliminate "Could not find input entity for PeerUser" errors
+  - Created `utils/entity_resolver.py` with cache warming and async pre-loading
+  - Integrated in `userbot.py` with configurable cache size (1000 entities)
+  - Connected to `TypingSimulator` for guaranteed typing simulation
+- ✅ **ASYNC/AWAIT CRITICAL FIXES**: Fixed race conditions that could cause message loss
+  - Fixed WAL and approved task management in `userbot.py`
+  - Converted Redis calls to proper async/await in `tests/`
+  - Fixed environment variable parsing with inline comments
+- ✅ **COMPREHENSIVE MONITORING SYSTEM**: Created proactive problem detection
+  - `monitoring/health_check.py`: System health monitoring (Redis, queues, memory, resources)
+  - `check_async_issues.py`: Detects missing await on Redis operations
+  - `check_system.sh`: Complete system verification script
+  - Current status: Review queue saturated with 150 pending messages
+
+### Previous Updates (Jun 27 - Session 2)
 - ✅ **MEMORY FIX**: Bot responses now saved to conversation history 
 - ✅ **CONTEXT SYSTEM**: Implemented 10 recent messages + temporal summary of 40 older messages
 - ✅ **TEMPORAL AWARENESS**: Summary includes "2 hours ago", "Yesterday" time markers
 - ✅ **ANTI-MULETILLA**: Tracks repeated phrases like "tell me more" to avoid repetition
-- ✅ **VERIFIED**: Redis stores 50 messages per user (not 50 total) - currently 3 active users
+- ✅ **VERIFIED**: Redis stores 50 messages per user (not 50 total) - currently 4 active users
 
 ### Previous Updates (Jun 27 - Morning)
 - ✅ **CRITICAL FIX**: Fixed LLM router initialization error (`'SupervisorAgent' object has no attribute 'llm_router'`)
@@ -53,6 +68,11 @@ python dashboard/backend/static_server.py
 
 # Telegram bot
 python userbot.py
+
+# Health monitoring  
+./health_check.sh        # Check system health only
+./check_system.sh        # Complete system check (health + async issues)
+python check_async_issues.py  # Check for async/await problems
 ```
 
 ### Environment Variables
@@ -77,6 +97,9 @@ DASHBOARD_API_KEY=your-secure-key
 | persona/nadia_llm1.md | LLM1 persona with EI framework | ✅ Working |
 | persona/nadia_v1.md | LLM2 POFMC humanizer (1391 tokens) | ✅ Working |
 | llms/stable_prefix_manager.py | OpenAI prompt caching manager | ✅ Working |
+| utils/entity_resolver.py | Entity pre-resolution system | ✅ Working |
+| monitoring/health_check.py | System health monitoring | ✅ Working |
+| check_async_issues.py | Async/await problems detector | ✅ Working |
 | cognition/constitution.py | Safety layer | ⚠️ 86.5% effective |
 | dashboard/frontend/app.js | Review interface | ⚠️ Missing customer status |
 
@@ -149,4 +172,4 @@ DASHBOARD_API_KEY=your-secure-key
 - Anti-muletilla integrated into summary generation
 - LLM2 prompt remains stable to prevent interpretation issues
 
-**Last Updated**: June 27, 2025 (4:00 PM) - Full memory system implementation
+**Last Updated**: June 27, 2025 (6:30 PM) - Entity resolution, async fixes, and monitoring system implementation

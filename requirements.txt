@@ -18,4 +18,4 @@ tiktoken==0.5.2
 
 # Testing E2E y Perfection Loop
 rich>=13.0.0
-questionary>=1.10.0
+questionary>=1.10.0psutil>=5.9.0
