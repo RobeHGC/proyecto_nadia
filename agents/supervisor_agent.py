@@ -66,6 +66,27 @@ class SupervisorAgent:
         
         # Cargar persona de LLM1
         self._load_llm1_persona()
+        
+        # Dynamic LLM Router setup (new approach)
+        try:
+            self.llm_router = get_dynamic_router(config.llm_profile, config)
+            self.llm1 = self.llm_router.select_llm1()
+            self.llm2 = self.llm_router.select_llm2()
+            logger.info(f"Dynamic LLM Router initialized with profile: {config.llm_profile}")
+        except Exception as e:
+            logger.warning(f"Dynamic router initialization failed, falling back to legacy: {e}")
+            # Fallback to legacy Multi-LLM setup
+            self.llm_router = None
+            self.llm1 = create_llm_client(
+                provider=config.llm1_provider,
+                model=config.llm1_model, 
+                api_key=config.gemini_api_key if config.llm1_provider == "gemini" else config.openai_api_key
+            )
+            self.llm2 = create_llm_client(
+                provider=config.llm2_provider,
+                model=config.llm2_model,
+                api_key=config.openai_api_key if config.llm2_provider == "openai" else config.gemini_api_key
+            )
     
     def _load_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
         """Carga la persona de LLM1 desde archivo externo."""
@@ -130,27 +151,6 @@ class SupervisorAgent:
         """Recarga la persona de LLM1 desde archivo (útil para hot-reload)."""
         self._load_llm1_persona(persona_file)
         logger.info("LLM1 persona reloaded successfully")
-        
-        # Dynamic LLM Router setup (new approach)
-        try:
-            self.llm_router = get_dynamic_router(config.llm_profile, config)
-            self.llm1 = self.llm_router.select_llm1()
-            self.llm2 = self.llm_router.select_llm2()
-            logger.info(f"Dynamic LLM Router initialized with profile: {config.llm_profile}")
-        except Exception as e:
-            logger.warning(f"Dynamic router initialization failed, falling back to legacy: {e}")
-            # Fallback to legacy Multi-LLM setup
-            self.llm_router = None
-            self.llm1 = create_llm_client(
-                provider=config.llm1_provider,
-                model=config.llm1_model, 
-                api_key=config.gemini_api_key if config.llm1_provider == "gemini" else config.openai_api_key
-            )
-            self.llm2 = create_llm_client(
-                provider=config.llm2_provider,
-                model=config.llm2_model,
-                api_key=config.openai_api_key if config.llm2_provider == "openai" else config.gemini_api_key
-            )
 
     async def process_message(self, user_id: str, message: str) -> ReviewItem:
         """
