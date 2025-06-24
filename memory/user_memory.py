@@ -2,7 +2,8 @@
 """Gestor de memoria para almacenar contexto de usuarios."""
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
+from datetime import datetime, timedelta
 
 import redis.asyncio as redis
 
@@ -243,6 +244,43 @@ class UserMemoryManager:
         except Exception as e:
             logger.error(f"Error obteniendo historial para {user_id}: {e}")
             return []
+    
+    async def get_conversation_with_summary(self, user_id: str, recent_count: int = 10) -> Dict[str, Any]:
+        """
+        Obtiene conversación reciente + resumen temporal de mensajes anteriores.
+        
+        Args:
+            user_id: ID del usuario
+            recent_count: Número de mensajes recientes completos (default 10)
+            
+        Returns:
+            Dict con 'recent_messages' y 'temporal_summary'
+        """
+        try:
+            # Obtener historial completo
+            full_history = await self.get_conversation_history(user_id)
+            
+            if not full_history:
+                return {"recent_messages": [], "temporal_summary": ""}
+            
+            # Dividir en recientes y anteriores
+            recent_messages = full_history[-recent_count:] if len(full_history) > recent_count else full_history
+            older_messages = full_history[:-recent_count] if len(full_history) > recent_count else []
+            
+            # Generar resumen temporal de mensajes anteriores
+            temporal_summary = ""
+            if older_messages:
+                temporal_summary = await self._generate_temporal_summary(older_messages)
+            
+            return {
+                "recent_messages": recent_messages,
+                "temporal_summary": temporal_summary,
+                "total_messages": len(full_history)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting conversation with summary for {user_id}: {e}")
+            return {"recent_messages": [], "temporal_summary": ""}
 
     async def add_to_conversation_history(self, user_id: str, message: Dict[str, Any]) -> None:
         """
@@ -373,3 +411,130 @@ class UserMemoryManager:
         except Exception as e:
             logger.error(f"Error during memory cleanup: {e}")
             return {}
+    
+    async def _generate_temporal_summary(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        Genera un resumen temporal de mensajes antiguos con marcadores de tiempo.
+        
+        Args:
+            messages: Lista de mensajes a resumir
+            
+        Returns:
+            Resumen temporal formateado
+        """
+        try:
+            if not messages:
+                return ""
+            
+            summary_points = []
+            current_time = datetime.now()
+            
+            # Agrupar mensajes por temas y extraer información clave
+            user_info = {}
+            topics_discussed = []
+            repeated_phrases = {}
+            
+            for msg in messages:
+                role = msg.get('role', '')
+                content = msg.get('content', '')
+                timestamp_str = msg.get('timestamp', '')
+                
+                # Calcular tiempo relativo
+                if timestamp_str:
+                    try:
+                        msg_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        time_diff = current_time - msg_time
+                        time_label = self._get_time_label(time_diff)
+                    except:
+                        time_label = "Earlier"
+                else:
+                    time_label = "Earlier"
+                
+                # Extraer información del usuario
+                if role == 'user':
+                    # Buscar nombre
+                    if any(phrase in content.lower() for phrase in ['my name is', 'i am', "i'm"]):
+                        for phrase in ['my name is', 'i am', "i'm"]:
+                            if phrase in content.lower():
+                                parts = content.lower().split(phrase)
+                                if len(parts) > 1:
+                                    potential_name = parts[1].strip().split()[0]
+                                    if potential_name and not user_info.get('name'):
+                                        user_info['name'] = potential_name.capitalize()
+                                        summary_points.append(f"{time_label}: User introduced themselves as {user_info['name']}")
+                    
+                    # Detectar temas importantes
+                    if any(word in content.lower() for word in ['work', 'job', 'profession', 'occupation']):
+                        if 'work' not in topics_discussed:
+                            topics_discussed.append('work')
+                            summary_points.append(f"{time_label}: Discussed work/profession")
+                    
+                    if any(word in content.lower() for word in ['family', 'mother', 'father', 'sister', 'brother']):
+                        if 'family' not in topics_discussed:
+                            topics_discussed.append('family')
+                            summary_points.append(f"{time_label}: Talked about family")
+                    
+                    if any(word in content.lower() for word in ['hobby', 'like to', 'enjoy', 'fun']):
+                        if 'hobbies' not in topics_discussed:
+                            topics_discussed.append('hobbies')
+                            summary_points.append(f"{time_label}: Shared hobbies/interests")
+                
+                # Trackear frases repetidas (para antimuletillas)
+                elif role == 'assistant':
+                    common_phrases = [
+                        'tell me more', 'that sounds', 'how interesting', 
+                        'fascinating', 'wow', 'amazing'
+                    ]
+                    for phrase in common_phrases:
+                        if phrase in content.lower():
+                            if phrase not in repeated_phrases:
+                                repeated_phrases[phrase] = []
+                            repeated_phrases[phrase].append(time_label)
+            
+            # Agregar información de frases repetidas si hay muchas
+            for phrase, times in repeated_phrases.items():
+                if len(times) >= 2:
+                    summary_points.append(f"Note: Used '{phrase}' {len(times)} times recently")
+            
+            # Formatear resumen final
+            if summary_points:
+                summary = "=== CONVERSATION CONTEXT ===\n"
+                summary += "\n".join(f"- {point}" for point in summary_points[:8])  # Máximo 8 puntos
+                return summary
+            else:
+                return "=== CONVERSATION CONTEXT ===\n- New conversation, no previous context"
+            
+        except Exception as e:
+            logger.error(f"Error generating temporal summary: {e}")
+            return ""
+    
+    def _get_time_label(self, time_diff: timedelta) -> str:
+        """
+        Convierte diferencia de tiempo en etiqueta legible.
+        
+        Args:
+            time_diff: Diferencia de tiempo
+            
+        Returns:
+            Etiqueta de tiempo como "2 hours ago", "Yesterday", etc.
+        """
+        total_seconds = int(time_diff.total_seconds())
+        
+        if total_seconds < 300:  # < 5 minutos
+            return "Just now"
+        elif total_seconds < 3600:  # < 1 hora
+            minutes = total_seconds // 60
+            return f"{minutes} minutes ago"
+        elif total_seconds < 7200:  # < 2 horas
+            return "1 hour ago"
+        elif total_seconds < 86400:  # < 24 horas
+            hours = total_seconds // 3600
+            return f"{hours} hours ago"
+        elif total_seconds < 172800:  # < 48 horas
+            return "Yesterday"
+        else:
+            days = total_seconds // 86400
+            if days < 7:
+                return f"{days} days ago"
+            else:
+                return "Over a week ago"

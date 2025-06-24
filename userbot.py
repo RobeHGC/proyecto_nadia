@@ -227,11 +227,15 @@ class UserBot:
                         logger.info("Approved message sent to user %s: %d bubbles", user_id, len(bubbles))
                         
                         # 🆕 CRITICAL FIX: Guardar respuesta del bot en historial
+                        # Combine bubbles into single response for history
+                        combined_response = " ".join(bubbles)
                         await self.memory.add_to_conversation_history(user_id, {
                             "role": "assistant",
-                            "content": " ".join(bubbles),
-                            "timestamp": datetime.now().isoformat()
+                            "content": combined_response,
+                            "timestamp": datetime.now().isoformat(),
+                            "bubbles": bubbles  # Keep original bubbles for reference
                         })
+                        logger.info(f"Bot response saved to conversation history for user {user_id}")
                     else:
                         # Try to get user info from database if not in Redis
                         database_mode = getattr(self.config, 'database_mode', 'normal')

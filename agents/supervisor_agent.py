@@ -355,13 +355,21 @@ class SupervisorAgent:
         # Usar la persona cargada desde archivo
         nadia_persona = self._llm1_persona
 
-        # Agregar historial reciente si existe
+        # Obtener conversación con resumen temporal
+        conversation_data = {"recent_messages": [], "temporal_summary": ""}
         history_context = ""
         recent = []
+        
         if hasattr(self, 'memory') and context.get('user_id'):
-            history = await self.memory.get_conversation_history(context.get('user_id', ''))
-            if history:
-                recent = history[-6:]  # Últimos 3 intercambios
+            # Usar nuevo método que devuelve 10 mensajes + resumen
+            conversation_data = await self.memory.get_conversation_with_summary(
+                context.get('user_id', ''), 
+                recent_count=10
+            )
+            
+            # Formatear mensajes recientes
+            if conversation_data['recent_messages']:
+                recent = conversation_data['recent_messages']
                 for msg in recent:
                     role = "User" if msg['role'] == 'user' else "Nadia"
                     history_context += f"\n{role}: {msg['content']}"
@@ -381,6 +389,13 @@ class SupervisorAgent:
             }
         ]
         
+        # Agregar resumen temporal si existe
+        if conversation_data.get('temporal_summary'):
+            messages.append({
+                "role": "system",
+                "content": conversation_data['temporal_summary']
+            })
+        
         # Agregar contexto de usuario si existe
         if context.get("name"):
             messages.append({
@@ -395,11 +410,11 @@ class SupervisorAgent:
                 "content": "Important: You asked a question recently. This time make a statement, share something relatable, or show empathy. Do NOT ask another question."
             })
         
-        # Agregar historial si existe
+        # Agregar historial reciente si existe
         if history_context:
             messages.append({
                 "role": "system",
-                "content": f"Recent conversation:{history_context}"
+                "content": f"Recent conversation (last 10 messages):{history_context}"
             })
         
         # Finalmente el mensaje del usuario

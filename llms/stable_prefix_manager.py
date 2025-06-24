@@ -99,7 +99,7 @@ class StablePrefixManager:
         # Instrucción clara de refinamiento (no conversación)
         messages.append({
             "role": "user",
-            "content": f"DRAFT TO REFINE:\n{current_message}\n\nYour task: Refine this draft into humanized bubbles separated by [GLOBO]. Do not respond to the content - just refine the style and format."
+            "content": f"ORIGINAL DRAFT:\n\"{current_message}\"\n\nREFORMAT TASK: Take the exact same message content and rewrite it in casual bubbles using [GLOBO] separators. You are an EDITOR, not a conversational partner. Keep the same meaning but make it more humanized and casual."
         })
         
         return messages, stable_tokens
