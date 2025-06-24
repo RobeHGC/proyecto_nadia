@@ -8,6 +8,10 @@ import random
 from typing import Optional
 
 from telethon import TelegramClient
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from utils.entity_resolver import EntityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,11 @@ class TypingSimulator:
     
     def __init__(self, client: TelegramClient):
         self.client = client
+        self.entity_resolver: Optional["EntityResolver"] = None
+    
+    def set_entity_resolver(self, entity_resolver: "EntityResolver"):
+        """Set the entity resolver for this typing simulator."""
+        self.entity_resolver = entity_resolver
         
     def calculate_typing_time(self, text: str) -> float:
         """Calculate realistic typing time based on text length."""
@@ -66,6 +75,17 @@ class TypingSimulator:
             previous_message: Previous message to simulate reading time
         """
         try:
+            # Verify entity is resolved before attempting typing simulation
+            if self.entity_resolver:
+                entity_resolved = await self.entity_resolver.ensure_entity_resolved(chat_id)
+                if not entity_resolved:
+                    logger.warning(f"Entity not resolved for {chat_id}, using fallback")
+                    # Use fallback: send messages without typing simulation
+                    for bubble in bubbles:
+                        if bubble.strip():
+                            await self.client.send_message(chat_id, bubble.strip())
+                            await asyncio.sleep(0.5)  # Basic fallback pause
+                    return
             # Initial thinking/reading pause
             if previous_message:
                 reading_time = self.calculate_reading_time(previous_message)

@@ -16,6 +16,7 @@ from database.models import DatabaseManager  # NUEVO: Import DatabaseManager
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
+from utils.entity_resolver import EntityResolver
 from utils.typing_simulator import TypingSimulator
 from utils.user_activity_tracker import UserActivityTracker
 
@@ -54,6 +55,9 @@ class UserBot:
         # Typing simulation
         self.typing_simulator = None  # Will be initialized after client start
         
+        # Entity resolution
+        self.entity_resolver = None  # Will be initialized after client start
+        
         # Adaptive Window Message Pacing
         self.activity_tracker = None  # Will be initialized after client start
 
@@ -72,7 +76,14 @@ class UserBot:
         """Starts the bot and WAL worker."""
         await self.client.start(phone=self.config.phone_number)
         await self.db_manager.initialize()  # NUEVO: Initialize database
+        
+        # Initialize entity resolver and warm up cache
+        self.entity_resolver = EntityResolver(self.client, cache_size=self.config.entity_cache_size)
+        resolved_count = await self.entity_resolver.warm_up_from_dialogs(limit=self.config.entity_warm_up_dialogs)
+        logger.info(f"Entity resolver initialized with {resolved_count} cached entities")
+        
         self.typing_simulator = TypingSimulator(self.client)  # Initialize typing simulator
+        self.typing_simulator.set_entity_resolver(self.entity_resolver)  # Connect entity resolver
         self.activity_tracker = UserActivityTracker(self.redis_url, self.config)  # Initialize activity tracker
         logger.info("Bot started successfully")
         
@@ -112,6 +123,12 @@ class UserBot:
     # ────────────────────────────────
     async def _handle_incoming_message(self, event):
         """Handle incoming message with adaptive window logic or fallback to original."""
+        # Pre-resolve entity in background for typing simulation
+        if self.entity_resolver:
+            asyncio.create_task(
+                self.entity_resolver.preload_entity_for_message(event.sender_id)
+            )
+        
         if self.config.enable_typing_pacing and self.activity_tracker:
             # Try adaptive window processing
             handled = await self.activity_tracker.handle_message(event, self._enqueue_message)

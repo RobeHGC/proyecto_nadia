@@ -44,12 +44,23 @@ class Config:
     max_batch_size: int = 5
     max_batch_wait_time: float = 30.0
     
+    # Entity Resolution Configuration
+    entity_cache_size: int = 1000
+    entity_warm_up_dialogs: int = 100
+    
     # opcionales / con default
     debug: bool = False
     log_level: str = "INFO"
 
     # App
     api_port: int = 8000
+
+    @staticmethod
+    def _clean_env_value(value: str) -> str:
+        """Remove comments from environment variable values."""
+        if '#' in value:
+            return value.split('#')[0].strip()
+        return value.strip()
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -74,11 +85,15 @@ class Config:
             
             # Adaptive Window Message Pacing configuration
             enable_typing_pacing=os.getenv("ENABLE_TYPING_PACING", "true").lower() == "true",
-            typing_window_delay=float(os.getenv("TYPING_WINDOW_DELAY", "1.5")),
-            typing_debounce_delay=float(os.getenv("TYPING_DEBOUNCE_DELAY", "5.0")),
-            min_batch_size=int(os.getenv("MIN_BATCH_SIZE", "2")),
-            max_batch_size=int(os.getenv("MAX_BATCH_SIZE", "5")),
-            max_batch_wait_time=float(os.getenv("MAX_BATCH_WAIT_TIME", "30.0")),
+            typing_window_delay=float(cls._clean_env_value(os.getenv("TYPING_WINDOW_DELAY", "1.5"))),
+            typing_debounce_delay=float(cls._clean_env_value(os.getenv("TYPING_DEBOUNCE_DELAY", "5.0"))),
+            min_batch_size=int(cls._clean_env_value(os.getenv("MIN_BATCH_SIZE", "2"))),
+            max_batch_size=int(cls._clean_env_value(os.getenv("MAX_BATCH_SIZE", "5"))),
+            max_batch_wait_time=float(cls._clean_env_value(os.getenv("MAX_BATCH_WAIT_TIME", "30.0"))),
+            
+            # Entity Resolution configuration
+            entity_cache_size=int(os.getenv("ENTITY_CACHE_SIZE", "1000")),
+            entity_warm_up_dialogs=int(os.getenv("ENTITY_WARM_UP_DIALOGS", "100")),
             
             # Legacy and optional
             openai_model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
