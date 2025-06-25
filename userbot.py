@@ -43,6 +43,9 @@ class UserBot(RedisConnectionMixin):
         self.cognitive_controller = CognitiveController()
         self.constitution = Constitution()
         self.db_manager = DatabaseManager(config.database_url)
+        
+        # Configure db_manager in supervisor for nickname access
+        self.supervisor.set_db_manager(self.db_manager)
         self.message_queue_key = "nadia_message_queue"
         self.processing_key = "nadia_processing"
 

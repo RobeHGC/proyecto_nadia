@@ -140,6 +140,28 @@ class DatabaseManager:
                            cta_data: Optional[Dict[str, Any]] = None) -> bool:
         """Approve a review with final bubbles and metadata."""
         async with self._pool.acquire() as conn:
+            # First, get the user_id from the interaction
+            interaction = await conn.fetchrow(
+                "SELECT user_id FROM interactions WHERE id = $1",
+                interaction_id
+            )
+            
+            if not interaction:
+                logger.error(f"Interaction {interaction_id} not found")
+                return False
+            
+            user_id = interaction['user_id']
+            
+            # Get the current customer status from user_current_status table
+            user_status = await conn.fetchrow(
+                "SELECT customer_status FROM user_current_status WHERE user_id = $1",
+                user_id
+            )
+            
+            # Use the current status or default to PROSPECT
+            current_customer_status = user_status['customer_status'] if user_status else 'PROSPECT'
+            
+            # Update the interaction with the current customer status
             result = await conn.execute(
                 """
                 UPDATE interactions
@@ -150,10 +172,11 @@ class DatabaseManager:
                     edit_tags = $2,
                     quality_score = $3,
                     reviewer_notes = $4,
-                    messages_sent_at = NOW()
+                    messages_sent_at = NOW(),
+                    customer_status = $6
                 WHERE id = $5 AND review_status = 'reviewing'
                 """,
-                final_bubbles, edit_tags, quality_score, reviewer_notes, interaction_id
+                final_bubbles, edit_tags, quality_score, reviewer_notes, interaction_id, current_customer_status
             )
 
             return result == "UPDATE 1"

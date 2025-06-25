@@ -471,6 +471,30 @@ class DataAnalytics {
                     }
                 },
                 { 
+                    data: 'created_at',
+                    width: '120px',
+                    render: (data) => {
+                        if (!data) return '--';
+                        const date = new Date(data);
+                        const now = new Date();
+                        const diffMs = now - date;
+                        const diffMins = Math.floor(diffMs / 60000);
+                        const diffHours = Math.floor(diffMs / 3600000);
+                        const diffDays = Math.floor(diffMs / 86400000);
+                        
+                        let timeAgo = '';
+                        if (diffMins < 60) {
+                            timeAgo = `${diffMins}m ago`;
+                        } else if (diffHours < 24) {
+                            timeAgo = `${diffHours}h ago`;
+                        } else {
+                            timeAgo = `${diffDays}d ago`;
+                        }
+                        
+                        return `<span title="${date.toLocaleString()}">${timeAgo}</span>`;
+                    }
+                },
+                { 
                     data: 'id',
                     width: '60px',
                     orderable: false,
@@ -483,7 +507,7 @@ class DataAnalytics {
                     }
                 }
             ],
-            order: [[2, 'desc']], // Sort by created_at desc
+            order: [[14, 'desc']], // Sort by created_at desc (column 14)
             language: {
                 emptyTable: "No data available",
                 info: "Showing _START_ to _END_ of _TOTAL_ entries",

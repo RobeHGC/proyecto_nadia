@@ -451,16 +451,9 @@ class UserMemoryManager(RedisConnectionMixin):
                 
                 # Extraer información del usuario
                 if role == 'user':
-                    # Buscar nombre
-                    if any(phrase in content.lower() for phrase in ['my name is', 'i am', "i'm"]):
-                        for phrase in ['my name is', 'i am', "i'm"]:
-                            if phrase in content.lower():
-                                parts = content.lower().split(phrase)
-                                if len(parts) > 1:
-                                    potential_name = parts[1].strip().split()[0]
-                                    if potential_name and not user_info.get('name'):
-                                        user_info['name'] = potential_name.capitalize()
-                                        summary_points.append(f"{time_label}: User introduced themselves as {user_info['name']}")
+                    # DISABLED: Automatic name extraction - names should only come from user_current_status table
+                    # This was causing incorrect names like "Never", "A", "Winter" to be extracted
+                    pass
                     
                     # Detectar temas importantes
                     if any(word in content.lower() for word in ['work', 'job', 'profession', 'occupation']):

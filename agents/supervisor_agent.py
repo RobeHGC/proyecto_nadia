@@ -151,6 +151,11 @@ class SupervisorAgent:
         """Recarga la persona de LLM1 desde archivo (útil para hot-reload)."""
         self._load_llm1_persona(persona_file)
         logger.info("LLM1 persona reloaded successfully")
+    
+    def set_db_manager(self, db_manager):
+        """Sets the database manager for accessing user information."""
+        self.db_manager = db_manager
+        logger.info("Database manager configured in supervisor")
 
     async def process_message(self, user_id: str, message: str) -> ReviewItem:
         """
@@ -162,6 +167,8 @@ class SupervisorAgent:
 
         # Obtener contexto del usuario
         context = await self.memory.get_user_context(user_id)
+        # Agregar user_id al contexto para usarlo en el prompt
+        context['user_id'] = user_id
         
         # 🆕 CRITICAL FIX: Guardar mensaje del usuario en historial
         await self.memory.add_to_conversation_history(user_id, {
@@ -360,10 +367,12 @@ class SupervisorAgent:
         history_context = ""
         recent = []
         
-        if hasattr(self, 'memory') and context.get('user_id'):
+        user_id = context.get('user_id', '')
+        
+        if hasattr(self, 'memory') and user_id:
             # Usar nuevo método que devuelve 10 mensajes + resumen
             conversation_data = await self.memory.get_conversation_with_summary(
-                context.get('user_id', ''), 
+                user_id, 
                 recent_count=10
             )
             
@@ -396,12 +405,22 @@ class SupervisorAgent:
                 "content": conversation_data['temporal_summary']
             })
         
-        # Agregar contexto de usuario si existe
-        if context.get("name"):
-            messages.append({
-                "role": "system",
-                "content": f"The user's name is {context['name']}. Use it naturally when appropriate."
-            })
+        # Obtener nickname desde la base de datos si existe
+        if user_id and hasattr(self, 'db_manager'):
+            try:
+                # Obtener nickname desde user_current_status
+                async with self.db_manager._pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT nickname FROM user_current_status WHERE user_id = $1",
+                        user_id
+                    )
+                    if row and row['nickname']:
+                        messages.append({
+                            "role": "system",
+                            "content": f"The user's name is {row['nickname']}. Use it naturally when appropriate."
+                        })
+            except Exception as e:
+                logger.warning(f"Could not fetch user nickname: {e}")
         
         # Agregar instrucción anti-interrogatorio
         if not can_ask_question:
