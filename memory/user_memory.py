@@ -5,28 +5,27 @@ import logging
 from typing import Any, Dict, List
 from datetime import datetime, timedelta
 
-import redis.asyncio as redis
+from utils.config import Config
+from utils.constants import MONTH_IN_SECONDS, RECENT_MESSAGES_COUNT, TEMPORAL_SUMMARY_COUNT
+from utils.datetime_helpers import now_iso, time_ago_text
+from utils.error_handling import handle_errors
+from utils.redis_mixin import RedisConnectionMixin
 
 logger = logging.getLogger(__name__)
 
 
-class UserMemoryManager:
+class UserMemoryManager(RedisConnectionMixin):
     """Gestiona la memoria y contexto de cada usuario."""
 
-    def __init__(self, redis_url: str, max_history_length: int = 50, max_context_size_kb: int = 100):
+    def __init__(self, redis_url: str = None, max_history_length: int = 50, max_context_size_kb: int = 100):
         """Inicializa el gestor con conexión a Redis y límites de memoria."""
-        self.redis_url = redis_url
-        self._redis = None
+        config = Config.from_env() if not redis_url else None
+        super().__init__()
+        self.config = config
         
         # Memory limits configuration
-        self.max_history_length = max_history_length  # Máximo número de mensajes en historial
-        self.max_context_size_kb = max_context_size_kb  # Máximo tamaño del contexto en KB
-
-    async def _get_redis(self):
-        """Obtiene o crea la conexión a Redis."""
-        if not self._redis:
-            self._redis = await redis.from_url(self.redis_url)
-        return self._redis
+        self.max_history_length = max_history_length
+        self.max_context_size_kb = max_context_size_kb
 
     async def close(self):
         """Cierra la conexión a Redis limpiamente."""
@@ -70,7 +69,7 @@ class UserMemoryManager:
             await r.set(
                 f"user:{user_id}",
                 json.dumps(context),
-                ex=86400 * 30  # Expirar en 30 días
+                ex=MONTH_IN_SECONDS  # Expirar en 30 días
             )
 
         except Exception as e:
@@ -372,7 +371,7 @@ class UserMemoryManager:
                         await r.set(
                             f"user:{user_id}",
                             json.dumps(compressed_context),
-                            ex=86400 * 30
+                            ex=MONTH_IN_SECONDS
                         )
                         
                         # Limpiar historial si es necesario

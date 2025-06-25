@@ -110,6 +110,20 @@ class CustomerStatusUpdateRequest(BaseModel):
     reason: str = Field("Manual update from dashboard", max_length=200)
     ltv_amount: float = Field(0.0, ge=0.0, le=10000.0)  # Max $10k LTV
 
+class NicknameUpdateRequest(BaseModel):
+    nickname: str = Field(..., max_length=50, min_length=1)
+    reason: str = Field("Manual update from dashboard", max_length=200)
+
+
+class ReviewerNotesUpdateRequest(BaseModel):
+    reviewer_notes: str = Field(..., max_length=1000)
+    
+    @field_validator('reviewer_notes')
+    @classmethod
+    def validate_reviewer_notes(cls, v):
+        import html
+        return html.escape(v.strip()) if v else ""
+
 
 class ReviewResponse(BaseModel):
     id: str
@@ -421,7 +435,7 @@ async def get_pending_reviews(
                     llm1_cost_usd=review.get("llm1_cost_usd"),
                     llm2_cost_usd=review.get("llm2_cost_usd"),
                     # Customer status
-                    customer_status=review.get("customer_status", "PROSPECT")
+                    customer_status=review.get("current_customer_status", "PROSPECT")
                 )
                 for review in reviews
             ]
@@ -1254,69 +1268,35 @@ async def update_customer_status(
         if database_mode == "skip":
             return {"status": "success", "message": "Database mode is skip, status not updated"}
         
-        # Get the latest interaction for this user to update
+        # Simple update to single source of truth
         async with db_manager._pool.acquire() as conn:
-            # Get the most recent interaction for this user
-            latest_interaction = await conn.fetchrow(
-                """
-                SELECT id, customer_status
-                FROM interactions 
-                WHERE user_id = $1 
-                ORDER BY created_at DESC 
-                LIMIT 1
-                """,
-                user_id
-            )
-            
-            if not latest_interaction:
-                raise HTTPException(status_code=404, detail="No interactions found for this user")
-            
-            interaction_id = latest_interaction['id']
-            current_status = latest_interaction['customer_status']
-            
-            # Simple direct update without using the complex function
-            # The function is designed for automated CTA responses, not manual updates
-            new_status = status_request.customer_status
-            
-            # Also update all interactions for this user to maintain consistency
+            # Update or insert into user_current_status table
             await conn.execute(
                 """
-                UPDATE interactions 
-                SET customer_status = $1::VARCHAR(20),
+                INSERT INTO user_current_status (user_id, customer_status, ltv_usd, updated_at)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    customer_status = EXCLUDED.customer_status,
                     ltv_usd = CASE 
-                        WHEN $1::VARCHAR(20) = 'CUSTOMER' THEN COALESCE(ltv_usd, 0) + $2::DECIMAL
-                        ELSE ltv_usd 
-                    END
-                WHERE user_id = $3::TEXT
-                """,
-                status_request.customer_status,
-                status_request.ltv_amount,
-                user_id
-            )
-            
-            # Log the manual status change
-            await conn.execute(
-                """
-                INSERT INTO customer_status_transitions (
-                    user_id, interaction_id, previous_status, new_status, reason, automated
-                ) VALUES ($1, $2, $3, $4, $5, FALSE)
+                        WHEN EXCLUDED.customer_status = 'CUSTOMER' 
+                        THEN user_current_status.ltv_usd + EXCLUDED.ltv_usd
+                        ELSE user_current_status.ltv_usd
+                    END,
+                    updated_at = NOW()
                 """,
                 user_id,
-                interaction_id,
-                current_status,
                 status_request.customer_status,
-                status_request.reason
+                status_request.ltv_amount
             )
         
-        logger.info(f"Customer status updated for user {user_id}: {current_status} → {status_request.customer_status}")
+        logger.info(f"Customer status updated for user {user_id} to {status_request.customer_status}")
         
         return {
             "status": "success",
             "user_id": user_id,
-            "previous_status": current_status,
             "new_status": status_request.customer_status,
-            "ltv_added": status_request.ltv_amount,
-            "reason": status_request.reason
+            "ltv_added": status_request.ltv_amount
         }
         
     except HTTPException:
@@ -1324,6 +1304,97 @@ async def update_customer_status(
     except Exception as e:
         logger.error(f"Error updating customer status for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update customer status")
+
+
+@app.post("/users/{user_id}/nickname")
+@limiter.limit("10/minute")
+async def update_nickname(
+    request: Request,
+    user_id: str,
+    nickname_request: NicknameUpdateRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Update nickname for a specific user"""
+    
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, nickname not updated"}
+        
+        # Update or insert nickname in user_current_status table
+        async with db_manager._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_current_status (user_id, nickname, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    nickname = EXCLUDED.nickname,
+                    updated_at = NOW()
+                """,
+                user_id,
+                nickname_request.nickname
+            )
+        
+        logger.info(f"Nickname updated for user {user_id} to '{nickname_request.nickname}'")
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "new_nickname": nickname_request.nickname
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating nickname for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update nickname")
+
+
+@app.post("/interactions/{interaction_id}/reviewer-notes")
+@limiter.limit("10/minute")
+async def update_reviewer_notes(
+    request: Request,
+    interaction_id: str,
+    notes_request: ReviewerNotesUpdateRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Update reviewer notes for a specific interaction"""
+    
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, notes not updated"}
+        
+        # Update reviewer notes in interactions table
+        async with db_manager._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE interactions 
+                SET reviewer_notes = $1, updated_at = NOW()
+                WHERE id = $2::UUID
+                """,
+                notes_request.reviewer_notes,
+                interaction_id
+            )
+            
+            # Check if any row was updated
+            if result == "UPDATE 0":
+                raise HTTPException(status_code=404, detail="Interaction not found")
+        
+        logger.info(f"Reviewer notes updated for interaction {interaction_id}")
+        
+        return {
+            "status": "success",
+            "interaction_id": interaction_id,
+            "reviewer_notes": notes_request.reviewer_notes
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating reviewer notes for interaction {interaction_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update reviewer notes")
 
 
 @app.get("/users/{user_id}/customer-status")
@@ -1341,59 +1412,34 @@ async def get_customer_status(
             return {"customer_status": "PROSPECT", "ltv_usd": 0.0, "message": "Database mode is skip"}
         
         async with db_manager._pool.acquire() as conn:
+            # Simple query from single source of truth
             user_status = await conn.fetchrow(
                 """
                 SELECT 
                     customer_status,
                     ltv_usd,
-                    cta_sent_count,
-                    last_cta_sent_at,
-                    conversion_date,
-                    created_at as last_interaction
-                FROM interactions
+                    nickname,
+                    updated_at
+                FROM user_current_status
                 WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT 1
                 """,
                 user_id
             )
             
             if not user_status:
+                # User not in status table yet - default to PROSPECT
                 return {
                     "customer_status": "PROSPECT",
                     "ltv_usd": 0.0,
-                    "cta_sent_count": 0,
-                    "message": "No interactions found for this user"
+                    "nickname": None,
+                    "updated_at": None
                 }
-            
-            # Get status transition history
-            transitions = await conn.fetch(
-                """
-                SELECT previous_status, new_status, reason, automated, created_at
-                FROM customer_status_transitions
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                user_id
-            )
             
             return {
                 "customer_status": user_status['customer_status'],
                 "ltv_usd": float(user_status['ltv_usd'] or 0),
-                "cta_sent_count": user_status['cta_sent_count'] or 0,
-                "last_cta_sent_at": user_status['last_cta_sent_at'].isoformat() if user_status['last_cta_sent_at'] else None,
-                "conversion_date": user_status['conversion_date'].isoformat() if user_status['conversion_date'] else None,
-                "last_interaction": user_status['last_interaction'].isoformat() if user_status['last_interaction'] else None,
-                "status_history": [
-                    {
-                        "previous_status": t['previous_status'],
-                        "new_status": t['new_status'],
-                        "reason": t['reason'],
-                        "automated": t['automated'],
-                        "date": t['created_at'].isoformat()
-                    } for t in transitions
-                ]
+                "nickname": user_status['nickname'],
+                "updated_at": user_status['updated_at'].isoformat() if user_status['updated_at'] else None
             }
         
     except Exception as e:

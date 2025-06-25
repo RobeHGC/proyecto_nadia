@@ -102,13 +102,15 @@ class DatabaseManager:
             rows = await conn.fetch(
                 """
                 SELECT
-                    id, user_id, user_message, llm1_raw_response, llm2_bubbles,
-                    constitution_risk_score, constitution_flags, constitution_recommendation,
-                    priority_score, created_at,
-                    llm1_model, llm2_model, llm1_cost_usd, llm2_cost_usd, customer_status
-                FROM interactions
-                WHERE review_status = 'pending' AND priority_score >= $1
-                ORDER BY priority_score DESC, created_at ASC
+                    i.id, i.user_id, i.user_message, i.llm1_raw_response, i.llm2_bubbles,
+                    i.constitution_risk_score, i.constitution_flags, i.constitution_recommendation,
+                    i.priority_score, i.created_at,
+                    i.llm1_model, i.llm2_model, i.llm1_cost_usd, i.llm2_cost_usd,
+                    COALESCE(ucs.customer_status, 'PROSPECT') as current_customer_status
+                FROM interactions i
+                LEFT JOIN user_current_status ucs ON i.user_id = ucs.user_id
+                WHERE i.review_status = 'pending' AND i.priority_score >= $1
+                ORDER BY i.priority_score DESC, i.created_at ASC
                 LIMIT $2
                 """,
                 min_priority, limit

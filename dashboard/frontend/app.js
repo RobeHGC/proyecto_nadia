@@ -148,6 +148,9 @@ class HITLDashboard {
             <div class="review-item" data-id="${review.id}" onclick="dashboard.selectReview('${review.id}')">
                 <div class="review-meta">
                     <span class="user-id">User ${review.user_id}</span>
+                    <span class="user-badges" id="badges-${review.user_id}">
+                        <span class="loading-badge">Loading...</span>
+                    </span>
                     <div>
                         <span class="priority-badge ${this.getPriorityClass(review.priority_score)}">
                             ${this.formatPriority(review.priority_score)}
@@ -169,6 +172,72 @@ class HITLDashboard {
                 </div>
             </div>
         `).join('');
+        
+        // Load nickname badges for unique users only
+        const uniqueUsers = [...new Set(reviews.map(r => r.user_id))];
+        uniqueUsers.forEach(userId => {
+            this.loadUserBadges(userId);
+        });
+    }
+    
+    async loadUserBadges(userId) {
+        try {
+            const response = await fetch(`${this.apiBase}/users/${userId}/customer-status`, {
+                headers: this.getAuthHeaders()
+            });
+            
+            if (response.ok) {
+                const statusData = await response.json();
+                this.renderUserBadges(userId, statusData);
+            } else {
+                this.renderUserBadges(userId, null);
+            }
+        } catch (error) {
+            console.error(`Failed to load user badges for ${userId}:`, error);
+            this.renderUserBadges(userId, null);
+        }
+    }
+    
+    renderUserBadges(userId, statusData) {
+        const badgesContainer = document.getElementById(`badges-${userId}`);
+        if (!badgesContainer) return;
+        
+        if (!statusData) {
+            badgesContainer.innerHTML = '<span class="error-badge">Error</span>';
+            return;
+        }
+        
+        const nickname = statusData.nickname || 'No name';
+        const status = statusData.customer_status || 'PROSPECT';
+        
+        badgesContainer.innerHTML = `
+            <span class="nickname-badge" title="Click to edit nickname" onclick="dashboard.editNickname('${userId}', '${nickname}')">
+                👤 ${nickname}
+            </span>
+        `;
+    }
+    
+    async editNickname(userId, currentNickname) {
+        const newNickname = prompt('Enter new nickname:', currentNickname);
+        if (newNickname && newNickname !== currentNickname) {
+            try {
+                const response = await fetch(`${this.apiBase}/users/${userId}/nickname`, {
+                    method: 'POST',
+                    headers: this.getAuthHeaders(),
+                    body: JSON.stringify({ nickname: newNickname })
+                });
+                
+                if (response.ok) {
+                    // Reload badges to show updated nickname
+                    this.loadUserBadges(userId);
+                } else {
+                    alert('Failed to update nickname');
+                }
+            } catch (error) {
+                console.error('Error updating nickname:', error);
+                alert('Error updating nickname');
+            }
+        }
     }
     
     getPriorityClass(priority) {
@@ -209,6 +278,9 @@ class HITLDashboard {
                 headers: this.getAuthHeaders()
             });
             this.currentReview = await response.json();
+            
+            // Don't set customer status from cached review data - load fresh from API instead
+            
             this.renderEditor();
         } catch (error) {
             console.error('Failed to load review details:', error);

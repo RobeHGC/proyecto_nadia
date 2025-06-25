@@ -6,7 +6,7 @@ Guidance for Claude Code when working with NADIA HITL system.
 
 NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 24yo American woman. All responses require human review before sending.
 
-## System Status: PRODUCTION READY ✅ (Jun 27, 2025 - 6:30 PM)
+## System Status: PRODUCTION READY ✅ (Jun 25, 2025 - 7:15 PM)
 
 ### Architecture
 1. **Pipeline**: Telegram → UserBot → Redis WAL → Multi-LLM → Human Review → Send
@@ -15,46 +15,51 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 4. **Context**: 50 messages per user stored in Redis (7-day expiration)
 5. **Debouncing**: 60-second delay for message batching
 
-### Recent Updates (Jun 27 - Session 3 FINAL)
-- ✅ **ENTITY RESOLUTION SYSTEM**: Implemented proactive entity pre-resolution to eliminate "Could not find input entity for PeerUser" errors
-  - Created `utils/entity_resolver.py` with cache warming and async pre-loading
-  - Integrated in `userbot.py` with configurable cache size (1000 entities)
-  - Connected to `TypingSimulator` for guaranteed typing simulation
-- ✅ **ASYNC/AWAIT CRITICAL FIXES**: Fixed race conditions that could cause message loss
-  - Fixed WAL and approved task management in `userbot.py`
-  - Converted Redis calls to proper async/await in `tests/`
-  - Fixed environment variable parsing with inline comments
-- ✅ **COMPREHENSIVE MONITORING SYSTEM**: Created proactive problem detection
-  - `monitoring/health_check.py`: System health monitoring (Redis, queues, memory, resources)
-  - `check_async_issues.py`: Detects missing await on Redis operations
-  - `check_system.sh`: Complete system verification script
-  - Current status: Review queue saturated with 150 pending messages
+### Recent Updates (Jun 25 - Dashboard Critical Fixes & User Management)
+- ✅ **DASHBOARD CRITICAL BUG FIXES**: Resolved all major errors from bugs.md
+  - Fixed `user_current_status` table missing (created with migrations)
+  - Fixed review queue showing approved messages (Redis fallback issue)
+  - Fixed `user_id=undefined` errors in customer status calls
+  - Fixed PostgreSQL permissions for new table
+  - Fixed entity resolution for new users (immediate cache from events)
+- ✅ **USER MANAGEMENT SYSTEM**: Nickname badges and customer status
+  - Added `nickname` column to `user_current_status` table
+  - Implemented nickname badges in review queue (editable via click)
+  - Fixed customer status logic in review editor (fresh API calls vs cached data)
+  - Removed complex customer status badges to avoid race conditions
+- ✅ **API ENDPOINTS ENHANCED**: 
+  - `GET /users/{user_id}/customer-status` - Returns status, nickname, LTV
+  - `POST /users/{user_id}/nickname` - Updates user nickname
+  - All endpoints use single `user_current_status` table for consistency
+- ✅ **SIMPLIFIED FRONTEND**: Removed potentially harmful complexity
+  - Eliminated duplicate badge IDs and race conditions
+  - Simplified user badge loading (unique users only)
+  - Removed temporary logging and debugging code
+  - Maintained modular, clean structure
 
-### Previous Updates (Jun 27 - Session 2)
-- ✅ **MEMORY FIX**: Bot responses now saved to conversation history 
-- ✅ **CONTEXT SYSTEM**: Implemented 10 recent messages + temporal summary of 40 older messages
-- ✅ **TEMPORAL AWARENESS**: Summary includes "2 hours ago", "Yesterday" time markers
-- ✅ **ANTI-MULETILLA**: Tracks repeated phrases like "tell me more" to avoid repetition
-- ✅ **VERIFIED**: Redis stores 50 messages per user (not 50 total) - currently 4 active users
+### Previous Updates (Jun 24 - Code Quality & Simplification) 
+- ✅ **MAJOR REFACTORING**: Eliminated code duplication across project
+  - Created `utils/redis_mixin.py` - RedisConnectionMixin for Redis connections
+  - Created `utils/error_handling.py` - @handle_errors decorator
+  - Created `utils/logging_config.py` - Centralized logging
+  - Created `utils/constants.py` - No more magic numbers
+  - Created `utils/datetime_helpers.py` - Consistent date formatting
+- ✅ **PROJECT ORGANIZATION**: Clean structure
+  - `bitacora/` - All historical docs, reports, scripts
+  - `checkpoints/` - Session checkpoints
+  - Removed 20+ utility scripts and empty files
 
-### Previous Updates (Jun 27 - Morning)
-- ✅ **CRITICAL FIX**: Fixed LLM router initialization error (`'SupervisorAgent' object has no attribute 'llm_router'`)
-- ✅ **LLM2 FIX**: Corrected refinement prompt to prevent LLM2 from responding to LLM1 as user
-- ✅ **PROMPT UPDATE**: LLM2 now correctly acts as editor/refinador with [GLOBO] formatting
-- ✅ **DEBOUNCING**: Updated to 60 seconds for better message batching
-
-### Previous Updates (Jun 26)
-- ✅ Fixed 422 error: Added missing TONE_* tags to validation
-- ✅ Security cleanup: Removed credentials from documentation  
-- ✅ Enhanced .gitignore for sensitive files
-- ✅ **LLM OPTIMIZATION**: Externalized prompts to persona/ directory with OpenAI caching
-- ✅ **AI ENHANCEMENT**: Integrated Emotional Intelligence Framework for LLM1
-- ❌ Customer tracking exists but not integrated in current dashboard
+### Previous Updates (Jun 27 - Session 3)
+- ✅ **ENTITY RESOLUTION SYSTEM**: Fixed "Could not find input entity for PeerUser" errors
+- ✅ **ASYNC/AWAIT CRITICAL FIXES**: Fixed race conditions
+- ✅ **COMPREHENSIVE MONITORING**: Health checks and async issue detection
+- ✅ **MEMORY FIX**: Bot responses saved to history
+- ✅ **CONTEXT SYSTEM**: 10 recent + 40 temporal summary
+- ✅ **ANTI-MULETILLA**: Prevents phrase repetition
 
 ### Known Issues
-- Dashboard always shows "PROSPECT" for customer status
-- Customer status tracking needs frontend integration
-- Constitution has 2 Spanish bypass vulnerabilities
+- Chrome DevTools noise: `/.well-known/appspecific/com.chrome.devtools.json` 404 (harmless)
+- Edit taxonomy connection error (minor - dashboard loads fine)
 
 ## Quick Start
 
@@ -70,9 +75,7 @@ python dashboard/backend/static_server.py
 python userbot.py
 
 # Health monitoring  
-./health_check.sh        # Check system health only
-./check_system.sh        # Complete system check (health + async issues)
-python check_async_issues.py  # Check for async/await problems
+python monitoring/health_check.py
 ```
 
 ### Environment Variables
@@ -87,21 +90,37 @@ DATABASE_URL=postgresql://username:password@localhost/nadia_hitl
 DASHBOARD_API_KEY=your-secure-key
 ```
 
+## Project Structure (Organized Jun 24)
+
+```
+chatbot_nadia/
+├── agents/          # Core agents (supervisor)
+├── api/             # API server & endpoints
+├── cognition/       # Constitution & cognitive controller
+├── database/        # Models & migrations
+├── llms/            # LLM clients & routing
+├── memory/          # User memory management
+├── utils/           # Shared utilities & mixins
+├── dashboard/       # Frontend review interface
+├── tests/           # Test files
+├── scripts/         # Utility scripts
+├── bitacora/        # Historical docs & reports
+└── checkpoints/     # Session checkpoints
+```
+
 ## Key Components
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| userbot.py | Telegram client with WAL | ✅ Working |
-| api/server.py | Review API + dashboard | ✅ Working |
+| userbot.py | Telegram client with entity resolution | ✅ Enhanced |
+| api/server.py | Review API + user management | ✅ Enhanced |
 | agents/supervisor_agent.py | Multi-LLM orchestration | ✅ Working |
-| persona/nadia_llm1.md | LLM1 persona with EI framework | ✅ Working |
-| persona/nadia_v1.md | LLM2 POFMC humanizer (1391 tokens) | ✅ Working |
-| llms/stable_prefix_manager.py | OpenAI prompt caching manager | ✅ Working |
-| utils/entity_resolver.py | Entity pre-resolution system | ✅ Working |
-| monitoring/health_check.py | System health monitoring | ✅ Working |
-| check_async_issues.py | Async/await problems detector | ✅ Working |
-| cognition/constitution.py | Safety layer | ⚠️ 86.5% effective |
-| dashboard/frontend/app.js | Review interface | ⚠️ Missing customer status |
+| database/models.py | Database operations | ✅ Updated |
+| utils/entity_resolver.py | Entity pre-resolution system | ✅ Enhanced |
+| utils/redis_mixin.py | Redis connection mixin | ✅ Working |
+| utils/constants.py | Project constants | ✅ Working |
+| user_current_status | Customer status & nickname table | ✅ Enhanced |
+| dashboard/frontend/app.js | Review interface with nickname badges | ✅ Simplified |
 
 ## Development Notes
 
@@ -109,67 +128,61 @@ DASHBOARD_API_KEY=your-secure-key
 - Set `PYTHONPATH=/home/rober/projects/chatbot_nadia` for API server
 - Redis required on port 6379
 - PostgreSQL required for full functionality
+- Use mixins and utilities to avoid code duplication
 
-## AI System Architecture
+## Recent Code Patterns
 
-### LLM Pipeline (Updated Jun 27 - Session 2)
-1. **LLM1 (Gemini 2.0 Flash)**: Creative response generation with Emotional Intelligence Framework
-   - Persona loaded from `persona/nadia_llm1.md` (2,486 chars)
-   - 4-stage conversation flow: ICEBREAKER → SURFACE_FLIRT → DEEP_EMOTION → HIGH_INTENT
-   - Texas-style American English specification
-   - Advanced boundary management for content redirection
-   - **NEW**: Uses last 10 messages + temporal summary of 40 older messages
-   - **NEW**: Receives temporal context like "2 hours ago: User mentioned work"
-   - **NEW**: Anti-muletilla warnings in context
+### Redis Connection (use mixin)
+```python
+from utils.redis_mixin import RedisConnectionMixin
 
-2. **LLM2 (GPT-4o-mini)**: Response humanization with 75% cost optimization
-   - POFMC (Professional OFM Chatter) role from `persona/nadia_v1.md` (1,391 tokens)
-   - OpenAI prompt caching enabled (≥1024 token stable prefix)
-   - **STABLE**: Editor role maintained with explicit prompt
-   - Current prompt: "ORIGINAL DRAFT...REFORMAT TASK...You are an EDITOR"
-   - [GLOBO] delimiter for message bubble splitting
+class MyClass(RedisConnectionMixin):
+    async def my_method(self):
+        r = await self._get_redis()
+        # use redis
+```
 
-3. **Constitution Layer**: Safety analysis (86.5% effective)
+### Constants (no magic numbers)
+```python
+from utils.constants import MONTH_IN_SECONDS, TYPING_DEBOUNCE_DELAY
+# Instead of: 86400 * 30
+# Use: MONTH_IN_SECONDS
+```
 
-### Cache Performance
-- Target cache ratio: ≥75% for cost optimization
-- Monitor via `/api/models/cache-metrics` endpoint
-- Warm-up required after persona changes
+### Datetime (consistent formatting)
+```python
+from utils.datetime_helpers import now_iso, time_ago_text
+# Instead of: datetime.now().isoformat()
+# Use: now_iso()
+```
 
-## Memory & Context Management
+## User Management System (Enhanced Jun 25)
 
-### Redis Storage (FULLY IMPLEMENTED ✅)
-- **Per-user conversation history**: 50 messages max (auto-trimmed)
-- **Redis keys**: `user:{user_id}:history` (7-day expiration)
-- **Context window**: Last 10 messages + temporal summary of 40 older
-- **Isolation**: Each user has separate conversation history
-- **Current state**: 3 active users, 110 total messages stored
+### Database Schema
+```sql
+user_current_status (
+    user_id TEXT PRIMARY KEY,
+    customer_status VARCHAR(20) CHECK (status IN ('PROSPECT', 'LEAD_QUALIFIED', 'CUSTOMER', 'CHURNED', 'LEAD_EXHAUSTED')),
+    ltv_usd DECIMAL(8,2) DEFAULT 0.00,
+    nickname VARCHAR(50),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+)
+```
 
-### Conversation Context System
-- **Recent messages**: Full text of last 10 messages (5 exchanges)
-- **Temporal summary**: AI-free summary with time markers:
-  - "3 hours ago: User introduced themselves as John"
-  - "2 hours ago: Discussed work/profession"
-  - "Note: Used 'tell me more' 3 times recently"
-- **Anti-muletilla**: Tracks overused phrases to prevent repetition
+### API Endpoints
+- `GET /users/{user_id}/customer-status` - Returns status, nickname, LTV
+- `POST /users/{user_id}/customer-status` - Update customer status  
+- `POST /users/{user_id}/nickname` - Update user nickname
 
-### Message Debouncing  
-- **Current setting**: 60 seconds (configurable via TYPING_DEBOUNCE_DELAY)
-- **Purpose**: Batch rapid messages into single context
-- **Config location**: `.env` file
+### Dashboard Features
+- **Review Editor**: Fresh customer status loading (no cached data)
+- **Review Queue**: Editable nickname badges (click to edit)
+- **Auto-refresh**: Maintains user data consistency every 30 seconds
 
-## Implementation Details
+### Implementation Notes
+- Single source of truth for user data
+- No complex joins or race conditions
+- Modular frontend with clean separation
+- Entity resolution for new Telegram users
 
-### Key Files Modified (Jun 27)
-1. **userbot.py:232-238**: Added bot response saving to history
-2. **memory/user_memory.py:247-282**: Added `get_conversation_with_summary()`
-3. **memory/user_memory.py:415-540**: Added `_generate_temporal_summary()`
-4. **supervisor_agent.py:352-418**: Updated to use 10+40 context system
-
-### Critical Fixes Applied
-- Bot responses now saved with role="assistant" 
-- Temporal summaries use Python pattern matching (no LLM)
-- Anti-muletilla integrated into summary generation
-- LLM2 prompt remains stable to prevent interpretation issues
-
-**Last Updated**: June 27, 2025 (6:30 PM) - Entity resolution, async fixes, and monitoring system implementation
+**Last Updated**: June 25, 2025 (7:15 PM) - User management and critical fixes

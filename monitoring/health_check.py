@@ -5,10 +5,18 @@ import psutil
 import json
 from datetime import datetime
 import os
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.config import Config
 
 class HealthChecker:
     def __init__(self):
-        self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        self.config = Config.from_env()
         self.alerts = []
         
     async def check_all(self):
@@ -38,7 +46,7 @@ class HealthChecker:
     async def check_redis_connection(self):
         """Verifica conexión con Redis."""
         try:
-            r = await redis.from_url(self.redis_url)
+            r = await redis.from_url(self.config.redis_url)
             await r.ping()
             print("✅ Redis: Conectado")
             
@@ -58,7 +66,7 @@ class HealthChecker:
     async def check_message_queues(self):
         """Verifica que las colas no estén saturadas."""
         try:
-            r = await redis.from_url(self.redis_url)
+            r = await redis.from_url(self.config.redis_url)
             
             # Check queue sizes
             wal_queue = await r.llen("nadia_message_queue")
@@ -83,7 +91,7 @@ class HealthChecker:
     async def check_conversation_memory(self):
         """Verifica que se estén guardando conversaciones."""
         try:
-            r = await redis.from_url(self.redis_url)
+            r = await redis.from_url(self.config.redis_url)
             
             # Count conversation histories
             history_count = 0

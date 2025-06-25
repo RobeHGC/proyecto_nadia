@@ -3,31 +3,34 @@
 import asyncio
 import contextlib
 import json
-import logging
 from datetime import datetime
 
-import redis.asyncio as redis
 from telethon import TelegramClient, events
 
 from agents.supervisor_agent import ReviewItem, SupervisorAgent
 from cognition.cognitive_controller import CognitiveController
-from cognition.constitution import Constitution  # NUEVO: Import Constitution
-from database.models import DatabaseManager  # NUEVO: Import DatabaseManager
+from cognition.constitution import Constitution
+from database.models import DatabaseManager
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
+from utils.constants import TYPING_DEBOUNCE_DELAY
+from utils.datetime_helpers import now_iso
 from utils.entity_resolver import EntityResolver
+from utils.error_handling import handle_errors
+from utils.logging_config import get_logger
+from utils.redis_mixin import RedisConnectionMixin
 from utils.typing_simulator import TypingSimulator
 from utils.user_activity_tracker import UserActivityTracker
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
-class UserBot:
+class UserBot(RedisConnectionMixin):
     """Main Telegram client that handles message events."""
 
     def __init__(self, config: Config):
+        super().__init__()
         self.config = config
 
         # Telegram
@@ -38,12 +41,8 @@ class UserBot:
         self.llm = OpenAIClient(config.openai_api_key, config.openai_model)
         self.supervisor = SupervisorAgent(self.llm, self.memory, config)
         self.cognitive_controller = CognitiveController()
-        self.constitution = Constitution()  # NUEVO: Initialize Constitution
-        self.db_manager = DatabaseManager(config.database_url)  # NUEVO: Initialize DatabaseManager
-
-        # Redis / WAL
-        self.redis_url = config.redis_url
-        self._redis: redis.Redis | None = None
+        self.constitution = Constitution()
+        self.db_manager = DatabaseManager(config.database_url)
         self.message_queue_key = "nadia_message_queue"
         self.processing_key = "nadia_processing"
 
@@ -64,10 +63,6 @@ class UserBot:
     # ────────────────────────────────
     # Redis Helpers
     # ────────────────────────────────
-    async def _get_redis(self) -> redis.Redis:
-        if not self._redis:
-            self._redis = await redis.from_url(self.redis_url)
-        return self._redis
 
     # ────────────────────────────────
     # Main Flow
@@ -84,7 +79,7 @@ class UserBot:
         
         self.typing_simulator = TypingSimulator(self.client)  # Initialize typing simulator
         self.typing_simulator.set_entity_resolver(self.entity_resolver)  # Connect entity resolver
-        self.activity_tracker = UserActivityTracker(self.redis_url, self.config)  # Initialize activity tracker
+        self.activity_tracker = UserActivityTracker(self.config.redis_url, self.config)  # Initialize activity tracker
         logger.info("Bot started successfully")
         
         if self.config.enable_typing_pacing:
@@ -123,11 +118,18 @@ class UserBot:
     # ────────────────────────────────
     async def _handle_incoming_message(self, event):
         """Handle incoming message with adaptive window logic or fallback to original."""
-        # Pre-resolve entity in background for typing simulation
-        if self.entity_resolver:
-            asyncio.create_task(
-                self.entity_resolver.preload_entity_for_message(event.sender_id)
-            )
+        # Cache entity from event immediately (when it's available)
+        if self.entity_resolver and hasattr(event, 'sender'):
+            try:
+                # Cache the entity directly from the event
+                self.entity_resolver.entity_cache[event.sender_id] = event.sender
+                logger.debug(f"Cached entity for user {event.sender_id} from event")
+            except Exception as e:
+                logger.warning(f"Failed to cache entity from event for {event.sender_id}: {e}")
+                # Fallback to background preloading
+                asyncio.create_task(
+                    self.entity_resolver.preload_entity_for_message(event.sender_id)
+                )
         
         if self.config.enable_typing_pacing and self.activity_tracker:
             # Try adaptive window processing
@@ -159,7 +161,7 @@ class UserBot:
                     "message": event.text,
                     "chat_id": event.chat_id,
                     "message_id": event.message.id,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": now_iso(),
                 }
                 logger.info("Message enqueued in WAL from user %s", message_data["user_id"])
             
@@ -249,7 +251,7 @@ class UserBot:
                         await self.memory.add_to_conversation_history(user_id, {
                             "role": "assistant",
                             "content": combined_response,
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": now_iso(),
                             "bubbles": bubbles  # Keep original bubbles for reference
                         })
                         logger.info(f"Bot response saved to conversation history for user {user_id}")
@@ -279,7 +281,7 @@ class UserBot:
                                     await self.memory.add_to_conversation_history(user_id, {
                                         "role": "assistant",
                                         "content": " ".join(bubbles),
-                                        "timestamp": datetime.now().isoformat()
+                                        "timestamp": now_iso()
                                     })
                                 else:
                                     logger.error("Review %s not found in database", review_id)
@@ -443,7 +445,7 @@ class UserBot:
                 "user_id": user_id,
                 "user_message": user_message[:200],  # Truncate for privacy
                 "blocked_response": blocked_response[:200],
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
 
             # Store in Redis with expiration for privacy
