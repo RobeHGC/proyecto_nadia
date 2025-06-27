@@ -6,169 +6,36 @@ Guidance for Claude Code when working with NADIA HITL system.
 
 NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 24yo American woman. All responses require human review before sending.
 
-## System Status: COHERENCE SYSTEM 100% IMPLEMENTED ✅ (Dec 26, 2025 - Night Session 2 - FULL INTEGRATION)
-
-### Latest Session (Dec 26 Night Session 2 - COHERENCE PIPELINE INTEGRATION)
-- ✅ **COHERENCE SYSTEM FULLY INTEGRATED**: Pipeline now active in main message flow
-  - **Integration Complete**: Modified `supervisor_agent.py` to use coherence pipeline
-  - **Circular Import Fixed**: Created `agents/types.py` for shared dataclasses
-  - **Auto-Initialization**: Coherence agents initialize when db_manager is set
-  - **Message Flow**: User → LLM1 → IntermediaryAgent → PostLLM2Agent → LLM2 → Review
-  - **Fallback Safety**: Original response returned if coherence analysis fails
-  - **Consistent Tracking**: Same interaction_id used throughout pipeline
-- ✅ **CODE CHANGES**:
-  - `agents/supervisor_agent.py`: Added coherence pipeline to `_generate_creative_response()`
-  - `agents/types.py`: NEW - Moved AIResponse and ReviewItem to avoid circular imports
-  - Updated imports in `database/models.py` and `userbot.py`
-  - Added `interaction_id` parameter flow through entire pipeline
-- ✅ **TESTING COMPLETE**: Integration test passes, all components working together
-
-### Previous Session (Dec 26 Night - COHERENCE & SCHEDULE SYSTEM IMPLEMENTATION)
-- ✅ **SISTEMA DE COHERENCIA Y VARIEDAD COMPLETADO**: Pipeline completo para detección de conflictos temporales
-  - **Arquitectura**: Supervisor → LLM1 (+tiempo Monterrey) → Intermediario → LLM2 → Post-LLM2
-  - **Database Schema**: 3 nuevas tablas (nadia_commitments, coherence_analysis, prompt_rotations)
-  - **Conflict Detection**: IDENTIDAD (loops) vs DISPONIBILIDAD (overlaps temporales)
-  - **JSON Analysis**: LLM2 prompt estático optimizado para cache 75% OpenAI
-  - **Auto-Correction**: String replacement manteniendo voz de Nadia
-  - **Dashboard Integration**: 3 nuevas métricas con color coding dinámico
-- ✅ **API ENDPOINTS IMPLEMENTADOS**: 4 nuevos endpoints para gestión coherencia
-  - `/api/coherence/metrics` - Dashboard real-time metrics  
-  - `/users/{id}/commitments` - User commitment management
-  - `/api/coherence/violations` - Conflict monitoring
-  - `/schedule/conflicts/{user_id}` - Schedule conflict detection
-- ✅ **MIGRATION EJECUTADA**: Base de datos extendida exitosamente
-  - 3 tablas creadas con índices optimizados
-  - 8 índices para performance sub-50ms
-  - Funciones PostgreSQL para auto-cleanup
-  - View optimizada active_commitments_view
-
-### Previous Session (Dec 26 Evening - COMPREHENSIVE RECOVERY + MCP DEBUGGING SETUP)
-- ✅ **COMPREHENSIVE RECOVERY STRATEGY IMPLEMENTED**: Complete replacement of cursor-based system
-  - **Problem Solved**: Messages sent during downtime weren't being recovered due to missing user cursors
-  - **Root Cause**: Old system only checked existing cursors, ignored new users completely
-  - **New Strategy**: Telegram dialog scan → SQL lookup → Gap detection → Batch recovery
-  - **Coverage**: Now detects ALL users (new + existing) and recovers missed messages reliably
-- ✅ **QUARANTINE TAB JAVASCRIPT FIX**: Duplicate `switchTab` function removed
-  - Fixed: `TypeError: Cannot read properties of undefined` error resolved
-  - Result: 2 quarantine messages now visible in dashboard
-  - Status: Quarantine system fully functional
-- ✅ **12-HOUR MESSAGE LIMIT**: Recovery system optimized to prevent message flooding
-  - **Time Limits**: TIER_1 (<2h), TIER_2 (2-6h), TIER_3 (6-12h), SKIP (>12h)
-  - **Configuration**: `max_message_age_hours: 12` (down from 24h)
-  - **Benefit**: Prevents recovery of very old messages that would overwhelm the system
-- ✅ **MCP DEBUGGING SYSTEM CONFIGURED**: Advanced debugging capabilities enabled
-  - **PostgreSQL MCP**: Direct database access for real-time data analysis
-  - **Filesystem MCP**: Direct code/log file access without copy/paste
-  - **Git MCP**: Direct repository history and diff analysis
-  - **Debugging Performance**: 9 steps (2-3 minutes) → 1 step (10 seconds)
-- ✅ **NEW RECOVERY COMPONENTS ADDED**:
-  - `telegram_history.py::scan_all_dialogs()` - Scans all Telegram conversations
-  - `database/models.py::get_last_message_per_user()` - Bulk SQL lookup for last messages
-  - `recovery_agent.py::startup_recovery_check()` - Complete rewrite using new strategy
-  - Rate limiting, batch processing, and comprehensive error handling
-
-### Previous Session (Dec 26 Late Night - QUARANTINE TAB DEBUG & RECOVERY MESSAGES COMPLETE)
-- ✅ **RECOVERY MESSAGES DISPLAY SYSTEM**: Complete endpoint + dashboard implementation
-- ✅ **DASHBOARD STRUCTURE FIX**: Review Editor correctly contained within Review tab  
-- ✅ **CRITICAL BUG FIXES COMPLETE**: All 7 reported bugs resolved
-
-### Previous Session (Dec 26 Night - RECOVERY AGENT COMPLETE IMPLEMENTATION)
-- ✅ **RECOVERY AGENT "Sin Dejar a Nadie Atrás" IMPLEMENTADO**: Zero message loss system (6 hours)
-  - Database: 3 new tables + recovery fields in interactions
-  - Core: `recovery_agent.py`, `telegram_history.py`, `recovery_config.py`
-  - 4-tier priority system: TIER_1 (<2h), TIER_2 (2-12h), TIER_3 (12-24h), SKIP (>24h)
-  - API: 6 endpoints - status, trigger, history, cursor management, health
-  - Dashboard: Recovery tab, widgets, manual controls, recovered message badges
-  - Safety: 24h age limit, 100 msg/session, health monitoring, comprehensive logging
-- ✅ **TELEGRAM INTEGRATION**: Message ID tracking + startup recovery hook
-- ✅ **PROTOCOLO DE SILENCIO INTEGRATION**: Skips quarantined users automatically
-- ✅ **PRODUCTION READY**: All tests passing, health checks operational
-
-### Previous Session (Dec 26 Evening - RECOVERY AGENT ANALYSIS & PREPARATION)
-- ✅ **TESTS & DOCUMENTATION**: Protocol Manager tests (12/12), API docs, developer guide
-- ✅ **DASHBOARD FIXES**: Review editor dimensions (flex: 1.5, min-width: 450px)
-- ✅ **RECOVERY PLANNING**: 7-phase plan prepared, gaps identified, risks assessed
-
-### Previous Session (Dec 25 Evening - PROTOCOLO DE SILENCIO IMPLEMENTATION)
-- ✅ **PROTOCOLO DE SILENCIO COMPLETADO**: Sistema completo para gestionar usuarios "time-wasters"  
-  - Intercepción de mensajes ANTES del LLM (ahorro real de $0.000307/mensaje)
-  - 9 endpoints API: activar/desactivar, cuarentena, batch operations, métricas
-  - Dashboard con pestaña cuarentena, modal avanzado, batch selections  
-  - Auto-expiración mensajes >7 días, audit log completo
-  - Sistema production-ready con tests 100% passing
-- ✅ **BASE DE DATOS**: 3 nuevas tablas (user_protocol_status, protocol_audit_log, quarantine_messages)
-- ✅ **DASHBOARD UI**: Pestaña cuarentena funcional con checkboxes y quick actions
-
-### Previous Session (Jun 25 Evening - Context & Memory Optimization)
-- ✅ **CUSTOMER STATUS SYNC FIX**: Fixed approve_review to sync customer_status from user_current_status table
-- ✅ **INCORRECT NAME INJECTION FIX**: Bot was extracting wrong names from conversations ("Never", "A", "Winter")
-  - Disabled automatic name extraction from conversations in memory/user_memory.py
-  - Modified supervisor to fetch nicknames from database instead of Redis context
-  - Cleaned Redis of incorrect extracted names
-- ✅ **DATA EXPLORER IMPROVEMENTS**: Added created_at column with time-ago display, ordered by most recent
-- ✅ **MEMORY CONTEXT OPTIMIZATION**: Enhanced LLM1 prompt format for better Gemini understanding
-  - Changed from "Nadia: message" to "- Andy said: / - You replied:" format
-  - Added explicit headers: "PREVIOUS CONVERSATION WITH ANDY"
-  - Added actionable instructions: "Continue this conversation naturally, referencing what was discussed above"
-  - Made anti-interrogation context specific with last question reference
-  - Improved temporal summary format for better context awareness
-
-### Current Memory System Status
-- ✅ **Redis Memory**: 50 messages per user, 7-day TTL, proper storage confirmed
-- ✅ **Conversation History**: Bot responses properly saved after approval
-- ✅ **Context Injection**: Comprehensive debugging shows 839 tokens sent to Gemini with full context
-- ✅ **Prompt Improvements**: New format should significantly improve Gemini's context awareness
-- 🔄 **Next**: Test improved context effectiveness with real interactions
-
-### Current System Capabilities (All Production Ready)
-- ✅ **Memory System**: Redis 50 msg/user + temporal summaries working
-- ✅ **PROTOCOLO DE SILENCIO**: Quarantine system saving $0.000307/msg 
-- ✅ **COMPREHENSIVE RECOVERY**: Zero message loss with complete user coverage (<12h window)
-- ✅ **COHERENCE SYSTEM**: Temporal conflict detection and auto-correction (100% integrated)
-- ✅ **Full Testing Suite**: Protocol Manager + API + Recovery health checks
-- ✅ **Dashboard**: Complete with Review, Analytics, Quarantine, Recovery, Coherence metrics (all functional)
-
-### Next Session Priorities  
-- 🧪 **END-TO-END COHERENCE VALIDATION**: Test integrated system with real scenarios
-  - **Conflict Triggers**: Send messages that create IDENTIDAD and DISPONIBILIDAD conflicts
-  - **Dashboard Metrics**: Verify coherence score, commitments, and conflicts update
-  - **Database Verification**: Check coherence_analysis and nadia_commitments tables
-  - **Performance Monitoring**: Measure latency impact (~200-500ms expected)
-- 🎨 **PROMPT DIVERSITY LIBRARY**: Create variations to prevent identity loops
-  - **10 LLM1 Variants**: artistic, fitness, student, social, professional, etc.
-  - **Rotation Logic**: Auto-switch on CONFLICTO_DE_IDENTIDAD detection
-  - **Personality Testing**: Ensure Nadia's voice remains consistent
-- 🔧 **PRODUCTION OPTIMIZATION**:
-  - **LLM2 Cache Tuning**: Achieve >75% cache hit rate
-  - **Commitment Cleanup**: Test auto-expiration of old commitments
-  - **Error Recovery**: Verify fallback mechanisms under load
+## System Status: PRODUCTION READY ✅ (Jun 25, 2025 - 7:15 PM)
 
 ### Architecture
-1. **Pipeline**: Telegram → UserBot → Redis WAL → Multi-LLM + Coherence → Human Review → Send
-2. **LLMs**: Gemini 2.0 Flash → Coherence Analysis (GPT-4o-mini) → Formatting → Constitution Safety
+1. **Pipeline**: Telegram → UserBot → Redis WAL → Multi-LLM → Human Review → Send
+2. **LLMs**: Gemini 2.0 Flash (free) → GPT-4o-mini → Constitution Safety
 3. **Cost**: $0.000307/message (70% cheaper than OpenAI-only)
 4. **Context**: 50 messages per user stored in Redis (7-day expiration)
 5. **Debouncing**: 60-second delay for message batching
-6. **Coherence**: Auto-detection and correction of temporal conflicts
 
-### Recent Updates (Jun 25 - Security Implementation & Reviewer Notes System)
-- ✅ **REVIEWER NOTES EDITING SYSTEM**: Complete implementation in analytics dashboard
-  - Added editable reviewer_notes column replacing CTA Response display
-  - Click-to-edit functionality with inline textarea and Save/Cancel buttons
-  - API endpoint: `POST /interactions/{interaction_id}/reviewer-notes`
-  - Keyboard shortcuts: Ctrl+Enter to save, Escape to cancel
-  - 1000-character limit with HTML sanitization and validation
-- ✅ **CRITICAL SECURITY IMPLEMENTATION**: Comprehensive protection system
-  - Pre-commit hook prevents API key commits (blocks sk-, AIza patterns)
-  - Protected `bot_session.session` from Git tracking
-  - Security documentation (`SECURITY.md`) with guidelines
-  - Setup script (`./setup-security.sh`) for easy configuration
-  - Environment templates updated with secure defaults
-- ✅ **GIT REPOSITORY RESTRUCTURING**: Clean production-ready structure
-  - Created `main-legacy` branch preserving old main as backup
-  - New `main` branch is production-ready reference
-  - Organized documentation: `bitacora/` (historical), `checkpoints/` (sessions)
-  - All sensitive files properly excluded from version control
+### Recent Updates (Jun 25 - Dashboard Critical Fixes & User Management)
+- ✅ **DASHBOARD CRITICAL BUG FIXES**: Resolved all major errors from bugs.md
+  - Fixed `user_current_status` table missing (created with migrations)
+  - Fixed review queue showing approved messages (Redis fallback issue)
+  - Fixed `user_id=undefined` errors in customer status calls
+  - Fixed PostgreSQL permissions for new table
+  - Fixed entity resolution for new users (immediate cache from events)
+- ✅ **USER MANAGEMENT SYSTEM**: Nickname badges and customer status
+  - Added `nickname` column to `user_current_status` table
+  - Implemented nickname badges in review queue (editable via click)
+  - Fixed customer status logic in review editor (fresh API calls vs cached data)
+  - Removed complex customer status badges to avoid race conditions
+- ✅ **API ENDPOINTS ENHANCED**: 
+  - `GET /users/{user_id}/customer-status` - Returns status, nickname, LTV
+  - `POST /users/{user_id}/nickname` - Updates user nickname
+  - All endpoints use single `user_current_status` table for consistency
+- ✅ **SIMPLIFIED FRONTEND**: Removed potentially harmful complexity
+  - Eliminated duplicate badge IDs and race conditions
+  - Simplified user badge loading (unique users only)
+  - Removed temporary logging and debugging code
+  - Maintained modular, clean structure
 
 ### Previous Updates (Jun 24 - Code Quality & Simplification) 
 - ✅ **MAJOR REFACTORING**: Eliminated code duplication across project
@@ -194,45 +61,6 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 - Chrome DevTools noise: `/.well-known/appspecific/com.chrome.devtools.json` 404 (harmless)
 - Edit taxonomy connection error (minor - dashboard loads fine)
 
-## MCP Debugging System
-
-### Configured MCP Servers
-- ✅ **postgres-nadia**: Direct PostgreSQL database access
-  - Command: `npx @modelcontextprotocol/server-postgres postgresql:///nadia_hitl`
-  - Usage: `@postgres_table_name` for direct queries
-  - Capabilities: Real-time data analysis, recovery operations monitoring
-- ✅ **filesystem-nadia**: Direct project filesystem access
-  - Command: `npx @modelcontextprotocol/server-filesystem /home/rober/projects/chatbot_nadia`
-  - Usage: `@path/to/file.py` for instant file access
-  - Capabilities: Code review, log analysis, configuration debugging
-- ✅ **git-nadia**: Git repository analysis
-  - Command: `python -m mcp_server_git --repository /home/rober/projects/chatbot_nadia`
-  - Usage: `/mcp__git__command` for git operations
-  - Capabilities: Commit history, blame analysis, diff comparison
-
-### MCP Debugging Workflow
-```bash
-# Traditional debugging (slow)
-User: "Recovery system not working"
-Claude: "Please run: SELECT * FROM recovery_operations"
-User: [copies/pastes query result]
-Claude: "Now show me recovery_agent.py lines 350-400"
-User: [copies/pastes code]
-Result: 9 steps, 2-3 minutes
-
-# MCP-enhanced debugging (fast)
-User: "Recovery system not working"  
-Claude: @postgres_recovery_operations @agents/recovery_agent.py:350-400
-Analysis: Direct access + immediate diagnosis
-Result: 1 step, 10 seconds
-```
-
-### Available MCP Commands
-- **Database**: `@postgres_interactions`, `@postgres_quarantine_messages`, `@postgres_recovery_operations`
-- **Code**: `@agents/recovery_agent.py`, `@utils/recovery_config.py`, `@dashboard/frontend/app.js`
-- **Git**: `/mcp__git__log`, `/mcp__git__diff`, `/mcp__git__blame filename`
-- **Logs**: `@logs/*.log`, `@bitacora/*.md`, `@checkpoints/*.md`
-
 ## Quick Start
 
 ### Running Services
@@ -243,34 +71,11 @@ PYTHONPATH=/home/rober/projects/chatbot_nadia python -m api.server
 # Dashboard (port 3000) 
 python dashboard/backend/static_server.py
 
-# Telegram bot (with auto-recovery on startup)
+# Telegram bot
 python userbot.py
 
 # Health monitoring  
 python monitoring/health_check.py
-
-# Recovery health check (standalone)
-python monitoring/recovery_health_check.py
-```
-
-### Development Workflow Commands
-```bash
-# Testing
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest -v           # Run all tests
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_coherence_integration.py -q  # Run specific test
-
-# Resilience & Performance Testing (Epic 4)
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_load_performance.py -v      # Load testing
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_api_resilience.py -v        # API failure testing
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_concurrent_processing.py -v # Concurrency testing
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_resource_exhaustion.py -v   # Resource limits testing
-
-# GitHub Issues
-gh issue create --template bug_report                             # Create bug report
-gh issue create --template feature_request                        # Create feature request
-
-# Code workflow (using .claude/commands)
-.claude/commands/issue.md [ISSUE_NUMBER]                          # Process GitHub issue end-to-end
 ```
 
 ### Environment Variables
@@ -307,17 +112,15 @@ chatbot_nadia/
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| userbot.py | Telegram client with entity resolution + recovery | ✅ Enhanced |
-| api/server.py | Review API + coherence endpoints + recovery | ✅ Enhanced |
-| agents/supervisor_agent.py | Multi-LLM orchestration + coherence pipeline | ✅ Integrated |
-| agents/intermediary_agent.py | LLM1→LLM2 data preparation + conflict analysis | ✅ Working |
-| agents/post_llm2_agent.py | Decision execution + commitment storage | ✅ Working |
-| agents/types.py | Shared dataclasses (AIResponse, ReviewItem) | ✅ NEW |
-| agents/recovery_agent.py | Zero message loss recovery system | ✅ Working |
-| database/models.py | Database operations + coherence tables | ✅ Updated |
-| persona/llm2_schedule_analyst.md | LLM2 coherence analysis prompt | ✅ Working |
-| utils/protocol_manager.py | PROTOCOLO DE SILENCIO manager | ✅ Working |
-| dashboard/frontend/app.js | Review interface + coherence metrics | ✅ Enhanced |
+| userbot.py | Telegram client with entity resolution | ✅ Enhanced |
+| api/server.py | Review API + user management | ✅ Enhanced |
+| agents/supervisor_agent.py | Multi-LLM orchestration | ✅ Working |
+| database/models.py | Database operations | ✅ Updated |
+| utils/entity_resolver.py | Entity pre-resolution system | ✅ Enhanced |
+| utils/redis_mixin.py | Redis connection mixin | ✅ Working |
+| utils/constants.py | Project constants | ✅ Working |
+| user_current_status | Customer status & nickname table | ✅ Enhanced |
+| dashboard/frontend/app.js | Review interface with nickname badges | ✅ Simplified |
 
 ## Development Notes
 
@@ -382,79 +185,4 @@ user_current_status (
 - Modular frontend with clean separation
 - Entity resolution for new Telegram users
 
-## Resilience & Performance Testing (Epic 4 - June 27, 2025) 
-
-### Test Suite Overview
-Comprehensive testing framework for system robustness under load and failure conditions:
-
-```bash
-# Load & Performance Testing
-tests/test_load_performance.py      # Message burst, concurrent users, sustained load
-tests/test_api_resilience.py        # API timeouts, rate limits, network failures  
-tests/test_concurrent_processing.py # Race conditions, memory access, queue safety
-tests/test_resource_exhaustion.py   # Memory/CPU/connection limits, graceful degradation
-```
-
-### Key Test Frameworks
-
-#### LoadTestingFramework
-```python
-# Test message processing under load
-await load_tester.simulate_message_burst(count=100, duration_seconds=15)
-await load_tester.simulate_concurrent_users(users=25, messages_per_user=4)
-await load_tester.measure_resource_usage(duration_seconds=20)
-```
-
-#### APIFailureSimulator  
-```python
-# Test API resilience patterns
-async with api_simulator.simulate_api_timeout("openai", timeout_duration=30.0):
-async with api_simulator.simulate_rate_limiting("gemini", failure_rate=0.8):
-async with api_simulator.simulate_network_failures("openai", failure_rate=0.5):
-```
-
-#### ConcurrencyTestFramework
-```python
-# Test concurrent access safety
-await concurrency_tester.simulate_concurrent_memory_access(user_count=20, operations_per_user=15)
-await concurrency_tester.simulate_redis_connection_competition(concurrent_connections=25)
-```
-
-#### ResourceExhaustionSimulator
-```python
-# Test system limits and degradation
-await resource_simulator.simulate_memory_exhaustion(target_mb=100)
-await resource_simulator.simulate_connection_exhaustion(max_connections=50)
-await resource_simulator.simulate_cpu_exhaustion(duration_seconds=10, cpu_threads=4)
-```
-
-### Performance Benchmarks
-- **Response Time**: <2s average under normal load, <5s under stress
-- **Throughput**: 100+ messages/minute sustained processing
-- **Memory Usage**: <500MB stable operation, <1GB under load  
-- **Error Rate**: <1% under normal load, <5% under stress
-- **Recovery**: System recovers to normal operation within 5 minutes
-
-### Resilience Patterns Tested
-1. **API Failure Handling**: Timeout protection, rate limit respect, graceful fallback
-2. **Concurrent Processing**: Race condition prevention, resource contention management  
-3. **Resource Management**: Memory leak detection, connection pool management
-4. **Queue Safety**: Message loss prevention, duplicate processing detection
-5. **Circuit Breaker**: Cascading failure prevention, automatic recovery
-6. **Graceful Degradation**: Performance degradation under increasing load
-
-### Running Resilience Tests
-```bash
-# Quick validation (core functionality)
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_load_performance.py::TestLoadPerformance::test_message_burst_light_load -v
-
-# Full resilience suite (extended runtime)
-PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_*_resilience.py tests/test_*_performance.py -v
-
-# Specific test categories
-pytest tests/test_load_performance.py -k "light"           # Light load tests only
-pytest tests/test_concurrent_processing.py -k "memory"    # Memory concurrency tests  
-pytest tests/test_resource_exhaustion.py -k "connection"  # Connection limit tests
-```
-
-**Last Updated**: June 27, 2025 (11:30 PM) - Epic 4: Resilience & Performance Testing Implementation
+**Last Updated**: June 25, 2025 (7:15 PM) - User management and critical fixes

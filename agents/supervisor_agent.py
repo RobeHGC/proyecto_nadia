@@ -6,8 +6,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
+from typing import Any, Dict, List
 
 from cognition.constitution import Constitution, ConstitutionAnalysis
 from llms.openai_client import OpenAIClient
@@ -17,11 +16,35 @@ from llms.dynamic_router import DynamicLLMRouter, get_dynamic_router
 from llms.stable_prefix_manager import StablePrefixManager
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
-from agents.intermediary_agent import IntermediaryAgent
-from agents.post_llm2_agent import PostLLM2Agent
-from agents.types import AIResponse, ReviewItem
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AIResponse:
+    """Container for AI-generated response data."""
+    llm1_raw: str
+    llm2_bubbles: List[str]
+    constitution_analysis: ConstitutionAnalysis
+    tokens_used: int
+    generation_time: float
+    # Multi-LLM tracking fields
+    llm1_model: str
+    llm2_model: str
+    llm1_cost: float
+    llm2_cost: float
+
+
+@dataclass
+class ReviewItem:
+    """Item queued for human review."""
+    id: str
+    user_id: str
+    user_message: str
+    ai_suggestion: AIResponse
+    priority: float
+    timestamp: datetime
+    conversation_context: Dict[str, Any]
 
 
 class SupervisorAgent:
@@ -43,11 +66,6 @@ class SupervisorAgent:
         
         # Cargar persona de LLM1
         self._load_llm1_persona()
-        
-        # Initialize coherence agents (will be configured when db_manager is set)
-        self.intermediary_agent = None
-        self.post_llm2_agent = None
-        self.db_manager = None
         
         # Dynamic LLM Router setup (new approach)
         try:
@@ -129,65 +147,17 @@ class SupervisorAgent:
 - If you asked a question recently, make a statement instead"""
             logger.warning("Using fallback hardcoded LLM1 persona")
     
-    def _get_monterrey_time_context(self) -> Dict[str, str]:
-        """Obtiene el contexto temporal actual para Monterrey, Nuevo León."""
-        try:
-            monterrey_tz = ZoneInfo("America/Monterrey")
-            now = datetime.now(monterrey_tz)
-            
-            # Determinar período del día
-            hour = now.hour
-            if 5 <= hour < 12:
-                period = "morning"
-            elif 12 <= hour < 17:
-                period = "afternoon"
-            elif 17 <= hour < 21:
-                period = "evening"
-            else:
-                period = "late night"
-            
-            return {
-                "current_time": now.strftime("%I:%M %p"),  # 10:30 PM
-                "current_date": now.strftime("%A, %B %d, %Y"),  # Thursday, June 27, 2025
-                "day_of_week": now.strftime("%A"),  # Thursday
-                "period": period,  # evening
-                "timezone": "America/Monterrey"
-            }
-        except Exception as e:
-            logger.error(f"Error getting Monterrey time context: {e}")
-            # Fallback to basic time info
-            return {
-                "current_time": datetime.now().strftime("%I:%M %p"),
-                "current_date": datetime.now().strftime("%A, %B %d, %Y"),
-                "day_of_week": datetime.now().strftime("%A"),
-                "period": "unknown",
-                "timezone": "UTC"
-            }
-    
     def reload_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
         """Recarga la persona de LLM1 desde archivo (útil para hot-reload)."""
         self._load_llm1_persona(persona_file)
         logger.info("LLM1 persona reloaded successfully")
     
     def set_db_manager(self, db_manager):
-        """Sets the database manager for accessing user information and initializes coherence agents."""
+        """Sets the database manager for accessing user information."""
         self.db_manager = db_manager
-        
-        # Initialize coherence agents with db_manager
-        if db_manager:
-            self.intermediary_agent = IntermediaryAgent(
-                db_manager=db_manager,
-                llm2_client=self.llm2  # Use existing LLM2 for coherence analysis
-            )
-            self.post_llm2_agent = PostLLM2Agent(
-                db_manager=db_manager,
-                llm_nano_client=None  # Could add nano client for fallback later
-            )
-            logger.info("Database manager and coherence agents configured in supervisor")
-        else:
-            logger.info("Database manager configured in supervisor")
+        logger.info("Database manager configured in supervisor")
 
-    async def process_message(self, user_id: str, message: str, context_override: Dict[str, Any] = None) -> ReviewItem:
+    async def process_message(self, user_id: str, message: str) -> ReviewItem:
         """
         Procesa un mensaje a través del pipeline de doble LLM y retorna ReviewItem.
         Ya no envía directamente - todo pasa por revisión humana.
@@ -200,16 +170,6 @@ class SupervisorAgent:
         # Agregar user_id al contexto para usarlo en el prompt
         context['user_id'] = user_id
         
-        # Apply context override for recovery scenarios
-        if context_override:
-            context.update(context_override)
-            # Handle temporal context for recovered messages
-            if context_override.get("is_recovered_message"):
-                original_date = context_override.get("original_date")
-                if original_date:
-                    # Add temporal awareness to the context
-                    context["recovery_temporal_note"] = f"This message was originally sent on {original_date} and is being processed now due to system recovery."
-        
         # 🆕 CRITICAL FIX: Guardar mensaje del usuario en historial
         await self.memory.add_to_conversation_history(user_id, {
             "role": "user",
@@ -217,11 +177,8 @@ class SupervisorAgent:
             "timestamp": datetime.now().isoformat()
         })
 
-        # Generate interaction ID for coherence tracking
-        interaction_id = str(uuid.uuid4())
-
-        # Paso 1: LLM-1 - Generación creativa con análisis de coherencia
-        llm1_response = await self._generate_creative_response(message, context, interaction_id)
+        # Paso 1: LLM-1 - Generación creativa
+        llm1_response = await self._generate_creative_response(message, context)
 
         # Paso 2: LLM-2 - Refinamiento y formato de burbujas
         llm2_bubbles = await self._refine_and_format_bubbles(llm1_response, message, context)
@@ -251,9 +208,9 @@ class SupervisorAgent:
             llm2_cost=self.llm2.get_last_cost()
         )
 
-        # Crear ReviewItem con el mismo interaction_id usado para coherence
+        # Crear ReviewItem
         review_item = ReviewItem(
-            id=interaction_id,  # Use same ID as coherence tracking
+            id=str(uuid.uuid4()),
             user_id=user_id,
             user_message=message,
             ai_suggestion=ai_response,
@@ -328,8 +285,8 @@ class SupervisorAgent:
                 'router_available': False
             }
     
-    async def _generate_creative_response(self, message: str, context: Dict[str, Any], interaction_id: Optional[str] = None) -> str:
-        """LLM-1: Genera respuesta creativa con temperature alta y análisis de coherencia."""
+    async def _generate_creative_response(self, message: str, context: Dict[str, Any]) -> str:
+        """LLM-1: Genera respuesta creativa con temperature alta."""
         prompt = await self._build_creative_prompt(message, context)
         
         # Log Gemini prompt tokens for monitoring
@@ -349,39 +306,8 @@ class SupervisorAgent:
         if self.llm_router and hasattr(llm1_client, 'get_last_cost'):
             cost = llm1_client.get_last_cost()
             self.llm_router.record_usage_cost("llm1", cost)
-        
-        # Apply coherence analysis pipeline if available
-        if self.intermediary_agent and self.post_llm2_agent:
-            try:
-                user_id = context.get('user_id', '')
-                time_context = self._get_monterrey_time_context()
-                
-                # Step 1: Intermediary agent analyzes with LLM2
-                self.logger.info(f"Running coherence analysis for user {user_id}")
-                llm2_json = await self.intermediary_agent.process(
-                    llm1_response=response,
-                    user_id=user_id,
-                    time_context=time_context,
-                    interaction_id=interaction_id
-                )
-                
-                # Step 2: Post-LLM2 agent executes decisions
-                final_response = await self.post_llm2_agent.execute(
-                    llm2_json=llm2_json,
-                    original_response=response,
-                    user_id=user_id
-                )
-                
-                self.logger.info(f"Coherence analysis complete for user {user_id}")
-                return final_response
-                
-            except Exception as e:
-                self.logger.error(f"Error in coherence pipeline: {e}")
-                # Fallback to original response if coherence analysis fails
-                return response
-        else:
-            # No coherence agents available, return original response
-            return response
+            
+        return response
 
     async def _refine_and_format_bubbles(self, raw_response: str, original_message: str,
                                        context: Dict[str, Any]) -> List[str]:
@@ -440,22 +366,8 @@ class SupervisorAgent:
         conversation_data = {"recent_messages": [], "temporal_summary": ""}
         history_context = ""
         recent = []
-        user_nickname = "User"  # Default fallback
         
         user_id = context.get('user_id', '')
-        
-        # Get user nickname first for better formatting
-        if user_id and hasattr(self, 'db_manager'):
-            try:
-                async with self.db_manager._pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        "SELECT nickname FROM user_current_status WHERE user_id = $1",
-                        user_id
-                    )
-                    if row and row['nickname']:
-                        user_nickname = row['nickname']
-            except Exception as e:
-                logger.warning(f"Could not fetch user nickname for context: {e}")
         
         if hasattr(self, 'memory') and user_id:
             # Usar nuevo método que devuelve 10 mensajes + resumen
@@ -464,14 +376,12 @@ class SupervisorAgent:
                 recent_count=10
             )
             
-            # Formatear mensajes recientes con formato más claro para Gemini
+            # Formatear mensajes recientes
             if conversation_data['recent_messages']:
                 recent = conversation_data['recent_messages']
                 for msg in recent:
-                    if msg['role'] == 'user':
-                        history_context += f"\n- {user_nickname} said: {msg['content']}"
-                    else:
-                        history_context += f"\n- You replied: {msg['content']}"
+                    role = "User" if msg['role'] == 'user' else "Nadia"
+                    history_context += f"\n{role}: {msg['content']}"
         
         # Analizar si puede hacer preguntas
         can_ask_question = True
@@ -492,42 +402,38 @@ class SupervisorAgent:
         if conversation_data.get('temporal_summary'):
             messages.append({
                 "role": "system",
-                "content": f"CONVERSATION BACKGROUND WITH {user_nickname.upper()}:\n{conversation_data['temporal_summary']}\n\nRemember these topics when responding naturally."
+                "content": conversation_data['temporal_summary']
             })
         
-        # Agregar instrucción de nombre si existe
-        if user_nickname != "User":
-            messages.append({
-                "role": "system",
-                "content": f"IMPORTANT: The user's name is {user_nickname}. Use their name naturally in your response when appropriate."
-            })
-        
-        # Inyectar contexto temporal de Monterrey
-        time_context = self._get_monterrey_time_context()
-        messages.append({
-            "role": "system",
-            "content": f"CURRENT TIME IN MONTERREY:\n- Time: {time_context['current_time']}\n- Date: {time_context['current_date']}\n- Period: {time_context['period']}\n\nUse this time context naturally in your response when relevant (like mentioning if it's late, early, weekend, etc.)."
-        })
+        # Obtener nickname desde la base de datos si existe
+        if user_id and hasattr(self, 'db_manager'):
+            try:
+                # Obtener nickname desde user_current_status
+                async with self.db_manager._pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT nickname FROM user_current_status WHERE user_id = $1",
+                        user_id
+                    )
+                    if row and row['nickname']:
+                        messages.append({
+                            "role": "system",
+                            "content": f"The user's name is {row['nickname']}. Use it naturally when appropriate."
+                        })
+            except Exception as e:
+                logger.warning(f"Could not fetch user nickname: {e}")
         
         # Agregar instrucción anti-interrogatorio
         if not can_ask_question:
-            last_question = ""
-            if recent:
-                for msg in reversed(recent):
-                    if msg.get('role') == 'assistant' and '?' in msg.get('content', ''):
-                        last_question = msg.get('content', '')[:50] + "..."
-                        break
-            
             messages.append({
                 "role": "system", 
-                "content": f"IMPORTANT: You recently asked a question{f' ({last_question})' if last_question else ''}. This time make a statement, share something relatable, or show empathy. Do NOT ask another question. Continue the conversation naturally."
+                "content": "Important: You asked a question recently. This time make a statement, share something relatable, or show empathy. Do NOT ask another question."
             })
         
         # Agregar historial reciente si existe
         if history_context:
             messages.append({
                 "role": "system",
-                "content": f"PREVIOUS CONVERSATION WITH {user_nickname.upper()}:{history_context}\n\nIMPORTANT: Continue this conversation naturally, referencing what was discussed above."
+                "content": f"Recent conversation (last 10 messages):{history_context}"
             })
         
         # Finalmente el mensaje del usuario
