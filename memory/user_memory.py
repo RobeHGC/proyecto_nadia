@@ -490,11 +490,10 @@ class UserMemoryManager(RedisConnectionMixin):
             
             # Formatear resumen final
             if summary_points:
-                summary = "=== CONVERSATION CONTEXT ===\n"
-                summary += "\n".join(f"- {point}" for point in summary_points[:8])  # Máximo 8 puntos
+                summary = "\n".join(f"- {point}" for point in summary_points[:5])  # Máximo 5 puntos más enfocados
                 return summary
             else:
-                return "=== CONVERSATION CONTEXT ===\n- New conversation, no previous context"
+                return "- First conversation with this user"
             
         except Exception as e:
             logger.error(f"Error generating temporal summary: {e}")

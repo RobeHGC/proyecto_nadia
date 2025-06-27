@@ -111,6 +111,48 @@
             margin-top: 0.25rem;
         }
         
+        .tab-navigation {
+            background: white;
+            border-bottom: 1px solid #e9ecef;
+            padding: 0 2rem;
+        }
+        
+        .tab-buttons {
+            display: flex;
+            gap: 0;
+            margin: 0;
+        }
+        
+        .tab-button {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            color: #666;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .tab-button:hover {
+            color: #667eea;
+            background: #f8f9fa;
+        }
+        
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            background: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+
         .main-content {
             display: flex;
             gap: 2rem;
@@ -120,7 +162,7 @@
         }
         
         .review-queue {
-            flex: 2;
+            flex: 1.5;
             background: white;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
@@ -128,12 +170,13 @@
         }
         
         .review-editor {
-            flex: 1;
+            flex: 1.5;
             background: white;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             overflow: hidden;
             min-height: 600px;
+            min-width: 450px;
         }
         
         .section-header {
@@ -750,6 +793,136 @@
             font-weight: 600;
         }
 
+        /* Quarantine Tab Styles */
+        .quarantine-message {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #f39c12;
+        }
+        
+        .quarantine-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        
+        .quarantine-user {
+            font-weight: 600;
+            color: #e67e22;
+        }
+        
+        .quarantine-age {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .quarantine-message-text {
+            background: white;
+            padding: 0.75rem;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+            margin: 0.5rem 0;
+            font-family: inherit;
+        }
+        
+        .quarantine-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .btn-quarantine {
+            padding: 0.4rem 0.8rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-process {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-process:hover {
+            background: #218838;
+        }
+        
+        .btn-process-deactivate {
+            background: #17a2b8;
+            color: white;
+        }
+        
+        .btn-process-deactivate:hover {
+            background: #138496;
+        }
+        
+        .btn-delete-quarantine {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-delete-quarantine:hover {
+            background: #c82333;
+        }
+        
+        .quarantine-stats {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #1976d2;
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+        
+        .protocol-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            background: #f39c12;
+            color: white;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+
+        .recovered-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            background: #e8f4f8;
+            color: #0c5460;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 flex-direction: column;
@@ -759,6 +932,127 @@
             .metrics-bar {
                 padding: 1rem;
             }
+            
+            .tab-navigation {
+                padding: 0 1rem;
+            }
+            
+            .quarantine-actions {
+                flex-direction: column;
+            }
+        }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }
+        
+        .modal-close:hover {
+            color: #333;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+        }
+        
+        .form-textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+        
+        .btn-modal {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-modal-primary {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-modal-primary:hover {
+            background: #c82333;
+        }
+        
+        .btn-modal-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-modal-secondary:hover {
+            background: #545b62;
         }
     </style>
 </head>
@@ -799,99 +1093,405 @@
             <div class="metric-value" id="savings-today">$0.00</div>
             <div class="metric-label">Savings Today</div>
         </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="protocol-savings">$0.00</div>
+            <div class="metric-label">Protocol Savings</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="active-protocols-count">0</div>
+            <div class="metric-label">Active Protocols</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="recovery-status">-</div>
+            <div class="metric-label">Recovery Agent</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="recovered-messages">-</div>
+            <div class="metric-label">Recovered Messages</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="coherence-score">100%</div>
+            <div class="metric-label">Coherence Score</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="active-commitments">0</div>
+            <div class="metric-label">Active Commitments</div>
+        </div>
+        
+        <div class="metric">
+            <div class="metric-value" id="schedule-conflicts">0</div>
+            <div class="metric-label">Schedule Conflicts</div>
+        </div>
     </div>
     
-    <div class="main-content">
-        <div class="review-queue">
-            <div class="section-header">
+    <div class="tab-navigation">
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="switchTab('review')">
                 📋 Review Queue
+            </button>
+            <button class="tab-button" onclick="switchTab('quarantine')">
+                🔇 Quarantine
+                <span id="quarantine-count" class="protocol-badge" style="display: none;">0</span>
+            </button>
+            <button class="tab-button" onclick="switchTab('recovery')">
+                🔄 Recovery
+            </button>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <!-- Review Tab Content -->
+        <div id="review-tab" class="tab-content active">
+            <div class="review-queue">
+                <div class="section-header">
+                    📋 Review Queue
+                    <button class="btn btn-activate-protocol" onclick="dashboard.showProtocolModal()" style="margin-left: auto; padding: 0.5rem 1rem; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                        🔇 Activate Protocol
+                    </button>
+                </div>
+                <div id="review-list" class="loading">
+                    Loading reviews...
+                </div>
             </div>
-            <div id="review-list" class="loading">
-                Loading reviews...
+            
+            <div class="review-editor">
+                <div class="section-header">
+                    ✏️ Review Editor
+                </div>
+                <div class="editor-content">
+                    <div id="no-selection" class="empty-state">
+                        <h3>Select a review to edit</h3>
+                        <p>Choose a message from the queue to start reviewing</p>
+                    </div>
+                    
+                    <div id="editor-form" style="display: none;">
+                        <div class="message-editor">
+                            <h4>📝 Edit Response</h4>
+                            <div id="bubbles-container"></div>
+                            <button type="button" onclick="addBubble()" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer;">+ Add Bubble</button>
+                        </div>
+                        
+                        <div class="tags-section">
+                            <h4>🏷️ Edit Tags</h4>
+                            <div class="tag-buttons" id="tag-buttons">
+                <button class="tag-btn" data-tag="CONTENT_EMOJI_ADD" onclick="dashboard.toggleTag('CONTENT_EMOJI_ADD')" title="Added emojis">
+                    CONTENT_EMOJI_ADD
+                </button>
+            
+                <button class="tag-btn" data-tag="CONTENT_EMOJI_CUT" onclick="dashboard.toggleTag('CONTENT_EMOJI_CUT')" title="Removed excessive emojis to make more balanced">
+                    CONTENT_EMOJI_CUT
+                </button>
+            
+                <button class="tag-btn" data-tag="CONTENT_QUESTION" onclick="dashboard.toggleTag('CONTENT_QUESTION')" title="Added engaging question">
+                    CONTENT_QUESTION
+                </button>
+            
+                <button class="tag-btn" data-tag="CONTENT_QUESTION_CUT" onclick="dashboard.toggleTag('CONTENT_QUESTION_CUT')" title="Remove unnecessary questions">
+                    CONTENT_QUESTION_CUT
+                </button>
+            
+                <button class="tag-btn" data-tag="CONTENT_REWRITE" onclick="dashboard.toggleTag('CONTENT_REWRITE')" title="Complete rewrite">
+                    CONTENT_REWRITE
+                </button>
+            
+                <button class="tag-btn" data-tag="CONTENT_SENTENCE_ADD" onclick="dashboard.toggleTag('CONTENT_SENTENCE_ADD')" title="Add more sentences/context">
+                    CONTENT_SENTENCE_ADD
+                </button>
+            
+                <button class="tag-btn" data-tag="CTA_DIRECT" onclick="dashboard.toggleTag('CTA_DIRECT')" title="Direct call-to-action inserted">
+                    CTA_DIRECT
+                </button>
+            
+                <button class="tag-btn" data-tag="CTA_MEDIUM" onclick="dashboard.toggleTag('CTA_MEDIUM')" title="Medium call-to-action inserted">
+                    CTA_MEDIUM
+                </button>
+            
+                <button class="tag-btn" data-tag="CTA_SOFT" onclick="dashboard.toggleTag('CTA_SOFT')" title="Soft call-to-action inserted">
+                    CTA_SOFT
+                </button>
+            
+                <button class="tag-btn" data-tag="ENGLISH_SLANG" onclick="dashboard.toggleTag('ENGLISH_SLANG')" title="Added American slang">
+                    ENGLISH_SLANG
+                </button>
+            
+                <button class="tag-btn" data-tag="TEXT_SPEAK" onclick="dashboard.toggleTag('TEXT_SPEAK')" title="Converted to text messaging style">
+                    TEXT_SPEAK
+                </button>
+            
+                <button class="tag-btn" data-tag="STRUCT_BUBBLE" onclick="dashboard.toggleTag('STRUCT_BUBBLE')" title="Changed bubble division">
+                    STRUCT_BUBBLE
+                </button>
+            
+                <button class="tag-btn" data-tag="STRUCT_SHORTEN" onclick="dashboard.toggleTag('STRUCT_SHORTEN')" title="Shortened significantly">
+                    STRUCT_SHORTEN
+                </button>
+            
+                <button class="tag-btn" data-tag="INCREASED_FLIRT" onclick="dashboard.toggleTag('INCREASED_FLIRT')" title="Increased flirty tone">
+                    INCREASED_FLIRT
+                </button>
+            
+                <button class="tag-btn" data-tag="REDUCED_CRINGE" onclick="dashboard.toggleTag('REDUCED_CRINGE')" title="Reduced cringe/melodrama">
+                    REDUCED_CRINGE
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_CASUAL" onclick="dashboard.toggleTag('TONE_CASUAL')" title="Made more casual/informal">
+                    TONE_CASUAL
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_CRINGE_DOWN" onclick="dashboard.toggleTag('TONE_CRINGE_DOWN')" title="Reduced cringe/melodrama">
+                    TONE_CRINGE_DOWN
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_ENERGY_UP" onclick="dashboard.toggleTag('TONE_ENERGY_UP')" title="Added energy/enthusiasm">
+                    TONE_ENERGY_UP
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_FLIRT_UP" onclick="dashboard.toggleTag('TONE_FLIRT_UP')" title="Increased flirty/playful tone">
+                    TONE_FLIRT_UP
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_LESS_IA" onclick="dashboard.toggleTag('TONE_LESS_IA')" title="Make response less AI-like and more human">
+                    TONE_LESS_IA
+                </button>
+            
+                <button class="tag-btn" data-tag="TONE_ROMANTIC_UP" onclick="dashboard.toggleTag('TONE_ROMANTIC_UP')" title="Increase romantic/intimate tone">
+                    TONE_ROMANTIC_UP
+                </button>
+            </div>
+                        </div>
+                        
+                        <div class="cta-section">
+                            <h4>🎯 Insert CTA</h4>
+                            <div class="cta-buttons">
+                                <button class="btn-cta btn-cta-soft" onclick="insertCTASoft()" title="CTA suave/indirecto">
+                                    💬 Soft CTA
+                                </button>
+                                <button class="btn-cta btn-cta-medium" onclick="insertCTAMedium()" title="CTA medio/sugestivo">
+                                    👀 Medium CTA
+                                </button>
+                                <button class="btn-cta btn-cta-direct" onclick="insertCTADirect()" title="CTA directo">
+                                    🔥 Direct CTA
+                                </button>
+                                <button class="btn-cta btn-cta-delete" onclick="dashboard.deleteCTA()" title="Delete all CTA bubbles">
+                                    🗑️ Delete CTAs
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="customer-status-section">
+                            <h4>👤 Customer Status</h4>
+                            <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
+                                Set the customer funnel status for this user
+                            </p>
+                            <div class="customer-status-controls">
+                                <select id="customer-status-select" class="customer-status-dropdown">
+                                    <option value="PROSPECT">🎯 Prospect (No CTA sent)</option>
+                                    <option value="LEAD_QUALIFIED">✨ Lead Qualified (Engaged)</option>
+                                    <option value="CUSTOMER">💰 Customer (Converted)</option>
+                                    <option value="CHURNED">📉 Churned (Stopped paying)</option>
+                                    <option value="LEAD_EXHAUSTED">😴 Lead Exhausted (No potential)</option>
+                                </select>
+                                <input type="number" id="ltv-input" placeholder="LTV Amount ($)" min="0" step="0.01" class="ltv-input">
+                                <button class="btn btn-update-status" onclick="dashboard.updateCustomerStatus()">
+                                    Update Status
+                                </button>
+                            </div>
+                            <div id="current-status-display" class="current-status-display">
+                                <span class="status-badge">Current: PROSPECT</span>
+                                <span class="ltv-display">LTV: $0.00</span>
+                            </div>
+                        </div>
+                        
+                        <div class="quality-section">
+                            <h4>⭐ LLM2 Humanization Quality</h4>
+                            <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
+                                Rate how well LLM2 refined the response to sound human-like
+                            </p>
+                            <div class="quality-stars" id="quality-stars">
+                                <span class="star" data-rating="1" style="cursor: pointer; user-select: none;">★</span>
+                                <span class="star" data-rating="2" style="cursor: pointer; user-select: none;">★</span>
+                                <span class="star selected" data-rating="3" style="cursor: pointer; user-select: none;">★</span>
+                                <span class="star" data-rating="4" style="cursor: pointer; user-select: none;">★</span>
+                                <span class="star" data-rating="5" style="cursor: pointer; user-select: none;">★</span>
+                            </div>
+                        </div>
+                        
+                        <div class="action-buttons">
+                            <button class="btn btn-approve" onclick="approveReview()">✅ Approve &amp; Send</button>
+                            <button class="btn btn-reject" onclick="rejectReview()">❌ Reject</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quarantine Tab Content -->
+        <div id="quarantine-tab" class="tab-content">
+            <div class="review-queue">
+                <div class="section-header">
+                    🔇 Quarantine Messages
+                </div>
+                
+                <div class="quarantine-stats">
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="active-protocols">0</div>
+                            <div class="stat-label">Active Protocols</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="quarantine-messages-count">0</div>
+                            <div class="stat-label">Messages in Quarantine</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cost-saved">$0.00</div>
+                            <div class="stat-label">Total Cost Saved</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="messages-24h">0</div>
+                            <div class="stat-label">Last 24h</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="quarantine-controls" style="margin-bottom: 1rem; display: none;" id="batch-controls">
+                    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                        <span id="selected-count" style="font-weight: 600; color: #667eea;">0 selected</span>
+                        <button class="btn-quarantine btn-process" onclick="dashboard.batchProcessQuarantine('process')">
+                            ✅ Process Selected
+                        </button>
+                        <button class="btn-quarantine btn-delete-quarantine" onclick="dashboard.batchProcessQuarantine('delete')">
+                            🗑️ Delete Selected
+                        </button>
+                        <button class="btn-quarantine" onclick="dashboard.clearSelection()" style="background: #6c757d; color: white;">
+                            Clear Selection
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="quarantine-list" class="loading">
+                    Loading quarantine messages...
+                </div>
             </div>
         </div>
         
-        <div class="review-editor">
-            <div class="section-header">
-                ✏️ Review Editor
+        <!-- Protocol Activation Modal -->
+    <div id="protocol-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">🔇 Activate Silence Protocol</h3>
+                <button class="modal-close" onclick="dashboard.closeProtocolModal()">&times;</button>
             </div>
-            <div class="editor-content">
-                <div id="no-selection" class="empty-state">
-                    <h3>Select a review to edit</h3>
-                    <p>Choose a message from the queue to start reviewing</p>
+            
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label" for="protocol-user-id">User ID *</label>
+                    <input type="text" id="protocol-user-id" class="form-input" placeholder="Enter user ID to silence" required>
                 </div>
                 
-                <div id="editor-form" style="display: none;">
-                    <div class="message-editor">
-                        <h4>📝 Edit Response</h4>
-                        <div id="bubbles-container"></div>
-                        <button type="button" onclick="addBubble()" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer;">+ Add Bubble</button>
+                <div class="form-group">
+                    <label class="form-label" for="protocol-reason">Reason (Optional)</label>
+                    <textarea id="protocol-reason" class="form-input form-textarea" placeholder="Why are you activating the silence protocol for this user?"></textarea>
+                </div>
+                
+                <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 1rem; margin: 1rem 0;">
+                    <strong>⚠️ Warning:</strong> This will silence all future messages from this user. They will be quarantined instead of processed by AI, saving costs but requiring manual review.
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn-modal btn-modal-secondary" onclick="dashboard.closeProtocolModal()">
+                    Cancel
+                </button>
+                <button class="btn-modal btn-modal-primary" onclick="dashboard.confirmActivateProtocol()">
+                    🔇 Activate Protocol
+                </button>
+            </div>
+        </div>
+
+        <!-- Recovery Tab Content -->
+        <div id="recovery-tab" class="tab-content">
+            <div class="review-queue">
+                <div class="section-header">
+                    🔄 Recovery Agent - "Sin Dejar a Nadie Atrás"
+                    <button class="btn" id="triggerRecoveryBtn" style="margin-left: auto; background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                        🚀 Trigger Recovery
+                    </button>
+                </div>
+
+                <!-- Recovery Status Cards -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin: 20px 0;">
+                    <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">System Status</div>
+                        <div style="font-size: 20px; font-weight: 600;" id="recoverySystemStatus">-</div>
                     </div>
                     
-                    <div class="tags-section">
-                        <h4>🏷️ Edit Tags</h4>
-                        <div class="tag-buttons" id="tag-buttons"></div>
+                    <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">Total Recovered</div>
+                        <div style="font-size: 20px; font-weight: 600;" id="totalRecoveredMessages">-</div>
                     </div>
                     
-                    <div class="cta-section">
-                        <h4>🎯 Insert CTA</h4>
-                        <div class="cta-buttons">
-                            <button class="btn-cta btn-cta-soft" onclick="insertCTASoft()" title="CTA suave/indirecto">
-                                💬 Soft CTA
-                            </button>
-                            <button class="btn-cta btn-cta-medium" onclick="insertCTAMedium()" title="CTA medio/sugestivo">
-                                👀 Medium CTA
-                            </button>
-                            <button class="btn-cta btn-cta-direct" onclick="insertCTADirect()" title="CTA directo">
-                                🔥 Direct CTA
-                            </button>
-                            <button class="btn-cta btn-cta-delete" onclick="dashboard.deleteCTA()" title="Delete all CTA bubbles">
-                                🗑️ Delete CTAs
-                            </button>
-                        </div>
+                    <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">Users Tracked</div>
+                        <div style="font-size: 20px; font-weight: 600;" id="usersTracked">-</div>
                     </div>
                     
-                    <div class="customer-status-section">
-                        <h4>👤 Customer Status</h4>
-                        <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
-                            Set the customer funnel status for this user
-                        </p>
-                        <div class="customer-status-controls">
-                            <select id="customer-status-select" class="customer-status-dropdown">
-                                <option value="PROSPECT">🎯 Prospect (No CTA sent)</option>
-                                <option value="LEAD_QUALIFIED">✨ Lead Qualified (Engaged)</option>
-                                <option value="CUSTOMER">💰 Customer (Converted)</option>
-                                <option value="CHURNED">📉 Churned (Stopped paying)</option>
-                                <option value="LEAD_EXHAUSTED">😴 Lead Exhausted (No potential)</option>
-                            </select>
-                            <input type="number" id="ltv-input" placeholder="LTV Amount ($)" min="0" step="0.01" class="ltv-input">
-                            <button class="btn btn-update-status" onclick="dashboard.updateCustomerStatus()">
-                                Update Status
-                            </button>
-                        </div>
-                        <div id="current-status-display" class="current-status-display">
-                            <span class="status-badge">Current: PROSPECT</span>
-                            <span class="ltv-display">LTV: $0.00</span>
-                        </div>
+                    <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">Last Operation</div>
+                        <div style="font-size: 20px; font-weight: 600;" id="lastRecoveryOperation">-</div>
                     </div>
-                    
-                    <div class="quality-section">
-                        <h4>⭐ LLM2 Humanization Quality</h4>
-                        <p style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">
-                            Rate how well LLM2 refined the response to sound human-like
-                        </p>
-                        <div class="quality-stars" id="quality-stars">
-                            <span class="star" data-rating="1" style="cursor: pointer; user-select: none;">★</span>
-                            <span class="star" data-rating="2" style="cursor: pointer; user-select: none;">★</span>
-                            <span class="star selected" data-rating="3" style="cursor: pointer; user-select: none;">★</span>
-                            <span class="star" data-rating="4" style="cursor: pointer; user-select: none;">★</span>
-                            <span class="star" data-rating="5" style="cursor: pointer; user-select: none;">★</span>
-                        </div>
+                </div>
+
+                <!-- Recovery Operations History -->
+                <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                    <h3 style="margin: 0 0 16px 0; color: #333;">📋 Recovery Operations History</h3>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: #e9ecef;">
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Type</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Started</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Status</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Users</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Recovered</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Skipped</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recoveryOperationsBody">
+                                <tr>
+                                    <td colspan="6" style="padding: 20px; text-align: center; color: #666;">Loading operations...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
-                    
-                    <div class="action-buttons">
-                        <button class="btn btn-approve" onclick="approveReview()">✅ Approve & Send</button>
-                        <button class="btn btn-reject" onclick="rejectReview()">❌ Reject</button>
+                </div>
+
+                <!-- Recovered Messages -->
+                <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0;">
+                    <h3 style="margin: 0 0 16px 0; color: #333;">📨 Recovered Messages</h3>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: #e9ecef;">
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">User</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Message</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Original Date</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Recovered Date</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Delay</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recoveredMessagesBody">
+                                <tr>
+                                    <td colspan="6" style="padding: 20px; text-align: center; color: #666;">Loading messages...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>

@@ -1,0 +1,225 @@
+# NADIA HITL Development Docker Compose Configuration
+# Optimized for local development with hot reload and debugging
+
+version: '3.8'
+
+services:
+  # ====================================================================
+  # Development Application Services
+  # ====================================================================
+  
+  # Telegram Bot Service (Development)
+  nadia-bot-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nadia-bot-dev
+    restart: "no"
+    command: ["python", "userbot.py"]
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis-dev:6379/0
+      - DATABASE_URL=postgresql://postgres:devpass123@postgres-dev:5432/nadia_hitl_dev
+      - LOG_LEVEL=DEBUG
+      - DEVELOPMENT_MODE=true
+    env_file:
+      - .env.development
+    volumes:
+      - ./:/app:delegated  # Mount source code for hot reload
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - nadia-dev-network
+    stdin_open: true
+    tty: true
+
+  # API Server Service (Development)
+  nadia-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nadia-api-dev
+    restart: "no"
+    command: ["python", "-m", "api.server", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis-dev:6379/0
+      - DATABASE_URL=postgresql://postgres:devpass123@postgres-dev:5432/nadia_hitl_dev
+      - LOG_LEVEL=DEBUG
+      - DEVELOPMENT_MODE=true
+    env_file:
+      - .env.development
+    volumes:
+      - ./:/app:delegated  # Mount source code for hot reload
+      - ./logs:/app/logs
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - nadia-dev-network
+    stdin_open: true
+    tty: true
+
+  # Dashboard Service (Development)
+  nadia-dashboard-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nadia-dashboard-dev
+    restart: "no"
+    command: ["python", "dashboard/backend/static_server.py"]
+    ports:
+      - "3000:3000"
+    environment:
+      - PYTHONPATH=/app
+      - API_BASE_URL=http://nadia-api-dev:8000
+      - LOG_LEVEL=DEBUG
+      - DEVELOPMENT_MODE=true
+    env_file:
+      - .env.development
+    volumes:
+      - ./:/app:delegated
+      - ./logs:/app/logs
+    depends_on:
+      - nadia-api-dev
+    networks:
+      - nadia-dev-network
+
+  # ====================================================================
+  # Development Infrastructure Services
+  # ====================================================================
+
+  # PostgreSQL Database (Development)
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: nadia-postgres-dev
+    restart: "no"
+    environment:
+      - POSTGRES_DB=nadia_hitl_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=devpass123
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - nadia-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nadia_hitl_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache (Development)
+  redis-dev:
+    image: redis:7-alpine
+    container_name: nadia-redis-dev
+    restart: "no"
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - nadia-dev-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ====================================================================
+  # Development Tools and Utilities
+  # ====================================================================
+
+  # Jupyter Notebook for Development
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: nadia-jupyter
+    restart: "no"
+    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    ports:
+      - "8888:8888"
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis-dev:6379/0
+      - DATABASE_URL=postgresql://postgres:devpass123@postgres-dev:5432/nadia_hitl_dev
+    volumes:
+      - ./:/app:delegated
+      - ./notebooks:/app/notebooks
+    depends_on:
+      - postgres-dev
+      - redis-dev
+    networks:
+      - nadia-dev-network
+
+  # Redis Commander (Redis GUI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: nadia-redis-commander
+    restart: "no"
+    environment:
+      - REDIS_HOSTS=local:redis-dev:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis-dev
+    networks:
+      - nadia-dev-network
+
+  # pgAdmin (PostgreSQL GUI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: nadia-pgadmin
+    restart: "no"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@nadia.dev
+      - PGADMIN_DEFAULT_PASSWORD=devpass123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "8082:80"
+    volumes:
+      - pgadmin_dev_data:/var/lib/pgadmin
+    depends_on:
+      - postgres-dev
+    networks:
+      - nadia-dev-network
+
+  # Mailhog (Email testing)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: nadia-mailhog
+    restart: "no"
+    ports:
+      - "1025:1025"  # SMTP port
+      - "8025:8025"  # Web UI port
+    networks:
+      - nadia-dev-network
+
+# ====================================================================
+# Development Networks and Volumes
+# ====================================================================
+
+networks:
+  nadia-dev-network:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  pgadmin_dev_data:
+    driver: local

@@ -1,0 +1,186 @@
+# Prometheus alert rules for NADIA HITL system
+# Defines when to trigger alerts for system health and performance
+
+groups:
+  - name: nadia_system_health
+    rules:
+      # High-level system health alerts
+      - alert: NADIAServiceDown
+        expr: up{job=~"nadia-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "NADIA service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 2 minutes."
+
+      - alert: NADIAHighMemoryUsage
+        expr: (container_memory_usage_bytes{name=~"nadia-.*"} / container_spec_memory_limit_bytes{name=~"nadia-.*"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage on {{ $labels.name }}"
+          description: "Container {{ $labels.name }} is using {{ $value }}% of available memory."
+
+      - alert: NADIAHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{name=~"nadia-.*"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage on {{ $labels.name }}"
+          description: "Container {{ $labels.name }} is using {{ $value }}% CPU for more than 5 minutes."
+
+  - name: nadia_application_health
+    rules:
+      # Application-specific alerts
+      - alert: NADIAHighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="nadia-api"}[5m])) > 2
+        for: 3m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High API response time"
+          description: "95th percentile response time is {{ $value }}s for more than 3 minutes."
+
+      - alert: NADIAHighErrorRate
+        expr: rate(http_requests_total{job="nadia-api",status=~"5.."}[5m]) / rate(http_requests_total{job="nadia-api"}[5m]) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High error rate on API"
+          description: "Error rate is {{ $value }}% for more than 2 minutes."
+
+      - alert: NADIAReviewQueueBacklog
+        expr: nadia_review_queue_size > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "Review queue backlog is high"
+          description: "Review queue has {{ $value }} pending items for more than 5 minutes."
+
+      - alert: NADIALLMCostSpike
+        expr: increase(nadia_llm_costs_total[1h]) > 10
+        for: 0m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "LLM costs spike detected"
+          description: "LLM costs increased by ${{ $value }} in the last hour."
+
+  - name: nadia_infrastructure_health
+    rules:
+      # Database alerts
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database has been down for more than 1 minute."
+
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High PostgreSQL connection usage"
+          description: "PostgreSQL is using {{ $value }}% of max connections."
+
+      - alert: PostgreSQLSlowQueries
+        expr: rate(pg_stat_database_tup_returned[5m]) / rate(pg_stat_database_tup_fetched[5m]) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "PostgreSQL slow queries detected"
+          description: "Query efficiency is {{ $value }} (should be > 0.1)."
+
+      # Redis alerts
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache has been down for more than 1 minute."
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis is using {{ $value }}% of available memory."
+
+      - alert: RedisHighConnections
+        expr: redis_connected_clients > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "High Redis connection count"
+          description: "Redis has {{ $value }} connected clients."
+
+  - name: nadia_business_metrics
+    rules:
+      # Business logic alerts
+      - alert: NADIANoMessagesProcessed
+        expr: increase(nadia_messages_processed_total[30m]) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "No messages processed in 30 minutes"
+          description: "The system hasn't processed any messages for 30 minutes."
+
+      - alert: NADIAHighMessageFailureRate
+        expr: rate(nadia_messages_failed_total[5m]) / rate(nadia_messages_processed_total[5m]) * 100 > 10
+        for: 3m
+        labels:
+          severity: critical
+          component: business
+        annotations:
+          summary: "High message failure rate"
+          description: "Message failure rate is {{ $value }}% for more than 3 minutes."
+
+      - alert: NADIAUserQuarantineSpike
+        expr: increase(nadia_quarantine_users_total[1h]) > 5
+        for: 0m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "Spike in user quarantine actions"
+          description: "{{ $value }} users were quarantined in the last hour."
+
+      - alert: NADIACoherenceViolations
+        expr: increase(nadia_coherence_violations_total[1h]) > 10
+        for: 0m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "High coherence violations detected"
+          description: "{{ $value }} coherence violations detected in the last hour."

@@ -1,0 +1,232 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "NADIA HITL System Overview",
+    "tags": ["nadia", "hitl", "chatbot"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=~\"nadia-.*\"}",
+            "legendFormat": "{{job}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"type": "value", "value": "0", "text": "DOWN"},
+              {"type": "value", "value": "1", "text": "UP"}
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Messages Processed (24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(nadia_messages_processed_total[24h])",
+            "legendFormat": "Total Messages"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Message Processing Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(nadia_messages_processed_total[5m])",
+            "legendFormat": "Messages/sec"
+          },
+          {
+            "expr": "rate(nadia_messages_failed_total[5m])",
+            "legendFormat": "Failed/sec"
+          }
+        ],
+        "yAxes": [
+          {"label": "Messages per second", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Review Queue Status",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "nadia_review_queue_size",
+            "legendFormat": "Pending Reviews"
+          },
+          {
+            "expr": "rate(nadia_reviews_completed_total[5m]) * 60",
+            "legendFormat": "Reviews/min"
+          }
+        ],
+        "yAxes": [
+          {"label": "Queue Size", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "LLM Costs (USD)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "increase(nadia_llm_costs_total[1h])",
+            "legendFormat": "Hourly Cost"
+          },
+          {
+            "expr": "increase(nadia_llm_costs_total[24h])",
+            "legendFormat": "Daily Cost"
+          }
+        ],
+        "yAxes": [
+          {"label": "Cost (USD)", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "System Resource Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{name=~\"nadia-.*\"}[5m]) * 100",
+            "legendFormat": "{{name}} CPU %"
+          }
+        ],
+        "yAxes": [
+          {"label": "CPU %", "min": 0, "max": 100}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+      },
+      {
+        "id": 7,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "container_memory_usage_bytes{name=~\"nadia-.*\"} / 1024 / 1024",
+            "legendFormat": "{{name}} Memory MB"
+          }
+        ],
+        "yAxes": [
+          {"label": "Memory (MB)", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      },
+      {
+        "id": 8,
+        "title": "Database Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(pg_stat_database_tup_returned[5m])",
+            "legendFormat": "Rows returned/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_fetched[5m])",
+            "legendFormat": "Rows fetched/sec"
+          }
+        ],
+        "yAxes": [
+          {"label": "Rows/sec", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32}
+      },
+      {
+        "id": 9,
+        "title": "Redis Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(redis_commands_processed_total[5m])",
+            "legendFormat": "Commands/sec"
+          },
+          {
+            "expr": "redis_connected_clients",
+            "legendFormat": "Connected clients"
+          }
+        ],
+        "yAxes": [
+          {"label": "Commands/sec", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32}
+      },
+      {
+        "id": 10,
+        "title": "API Response Times",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"nadia-api\"}[5m]))",
+            "legendFormat": "50th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"nadia-api\"}[5m]))",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"nadia-api\"}[5m]))",
+            "legendFormat": "99th percentile"
+          }
+        ],
+        "yAxes": [
+          {"label": "Response time (s)", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40}
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(up{job=~\"nadia-.*\"}, instance)",
+          "refresh": 1
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "prometheus",
+          "expr": "changes(nadia_build_info[5m]) > 0",
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "textFormat": "Deployment"
+        }
+      ]
+    }
+  }
+}

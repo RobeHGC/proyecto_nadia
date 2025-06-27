@@ -1,0 +1,157 @@
+name: 🐛 Bug Report
+description: Report a bug or unexpected behavior
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below with as much detail as possible.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component Affected
+      description: Which component is affected by this bug?
+      options:
+        - Telegram Bot (userbot.py)
+        - API Server (api/server.py)
+        - Dashboard (frontend)
+        - Database (models.py)
+        - LLM Integration (agents/)
+        - Memory System (memory/)
+        - Recovery System (recovery_agent.py)
+        - Protocol Manager (quarantine)
+        - Coherence System
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this bug?
+      options:
+        - Critical (system down, data loss)
+        - High (core functionality broken)
+        - Medium (feature partially broken)
+        - Low (minor issue, workaround exists)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Information
+      description: |
+        Please provide information about your environment:
+      placeholder: |
+        - OS: [e.g. Ubuntu 22.04, Windows 11, macOS 13]
+        - Python Version: [e.g. 3.10.8]
+        - Branch: [e.g. main, issue/3-workflow-readme]
+        - Commit Hash: [if known]
+        - Database: [PostgreSQL version if relevant]
+        - Redis: [Redis version if relevant]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: |
+        Please provide any relevant error logs, stack traces, or console output.
+        **Note**: Please redact any sensitive information (API keys, user data, etc.)
+      placeholder: |
+        Paste error logs here...
+        
+        # Example of properly redacted logs:
+        # ERROR: Failed to call OpenAI API with key sk-****
+        # USER: user_id_****** sent message: "Hello"
+      render: text
+
+  - type: checkboxes
+    id: llm_cost_impact
+    attributes:
+      label: LLM Cost Impact Analysis
+      description: |
+        Check all that apply to help us prioritize based on cost impact:
+      options:
+        - label: Bug causes unnecessary LLM API calls (increases costs)
+        - label: Bug prevents LLM caching (reduces efficiency)
+        - label: Bug causes message retries/regeneration (duplicates costs)
+        - label: Bug affects quarantine system (may increase processing of spam)
+        - label: Bug affects recovery system (may duplicate message processing)
+        - label: No direct LLM cost impact
+
+  - type: checkboxes
+    id: user_impact
+    attributes:
+      label: User Impact Assessment
+      description: |
+        Check all that apply:
+      options:
+        - label: Affects message delivery to users
+        - label: Affects message quality/appropriateness
+        - label: Affects system reliability/uptime
+        - label: Affects dashboard/admin functionality
+        - label: Data integrity concerns
+        - label: Security implications
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context about the problem here:
+        - Screenshots (if applicable)
+        - Database queries that might help
+        - Related issues or PRs
+        - Potential solutions you've considered
+      placeholder: Any additional information that might help us understand and fix the issue...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you have completed these steps:
+      options:
+        - label: I have searched for existing issues that might be related
+        - label: I have provided a clear and descriptive title
+        - label: I have included steps to reproduce the issue
+        - label: I have redacted any sensitive information from logs
+        - label: I have selected the appropriate component and severity level

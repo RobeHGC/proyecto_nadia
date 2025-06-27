@@ -1,0 +1,82 @@
+# Prometheus configuration for NADIA HITL monitoring
+# Collects metrics from all application services
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'nadia-hitl'
+    environment: 'production'
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # NADIA API Server metrics
+  - job_name: 'nadia-api'
+    static_configs:
+      - targets: ['nadia-api:8000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+    params:
+      format: ['prometheus']
+
+  # NADIA Bot metrics (if we add metrics endpoint)
+  - job_name: 'nadia-bot'
+    static_configs:
+      - targets: ['nadia-bot:9001']  # We'll add this metrics endpoint
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # PostgreSQL metrics (using postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
+  # Redis metrics (using redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+
+  # Node/system metrics (using node_exporter)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # Nginx metrics (using nginx_exporter)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+    scrape_interval: 30s
+
+  # Container metrics (cAdvisor)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+
+  # Custom application metrics
+  - job_name: 'nadia-custom-metrics'
+    static_configs:
+      - targets: ['nadia-api:8000']
+    scrape_interval: 15s
+    metrics_path: /api/metrics/prometheus
+    params:
+      format: ['prometheus']
