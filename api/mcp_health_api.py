@@ -5,6 +5,7 @@ Exposes automated MCP health check results via REST API
 
 import asyncio
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
