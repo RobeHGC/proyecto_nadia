@@ -54,3 +54,7 @@ backups/*.sql.gz.meta
 # Architecture docs (keep local)
 ARCHITECTURE.md
 REQUIREMENTS.md
+.vscode/
+node_modules/
+package-lock.json
+package.json
