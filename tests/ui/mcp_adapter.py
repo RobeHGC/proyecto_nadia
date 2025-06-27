@@ -2,7 +2,8 @@
 MCP Adapter for Puppeteer UI Testing
 
 This module provides the bridge between the UI testing framework and the actual MCP tools.
-It handles the translation between our testing interface and MCP tool calls.
+It handles the translation between our testing interface and MCP tool calls with comprehensive
+error handling, retry mechanisms, security validation, and configuration management.
 """
 import json
 import asyncio
@@ -12,6 +13,10 @@ import os
 from typing import Dict, Any, Optional, Union
 from dataclasses import dataclass
 import logging
+
+from .config import get_config, UITestConfig
+from .retry_utils import retry_async, UIRetryConfigs, RetryableError
+from .security import get_security_manager, SecurityManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,131 +41,202 @@ class PuppeteerMCPAdapter:
     """
     Adapter for calling Puppeteer MCP tools.
     
-    This class handles the actual MCP tool calls for browser automation,
-    replacing the stub implementations in the test framework.
+    This class handles the actual MCP tool calls for browser automation with
+    comprehensive configuration management, retry mechanisms, and security validation.
     """
     
-    def __init__(self, headless: bool = True):
-        self.headless = headless
+    def __init__(self, config: Optional[UITestConfig] = None, security_manager: Optional[SecurityManager] = None):
+        self.config = config or get_config()
+        self.security_manager = security_manager or get_security_manager()
         self.browser_session = None
-        self._launch_options = {
-            "headless": headless,
-            "args": ["--no-sandbox", "--disable-dev-shm-usage"] if headless else []
-        }
+        self._launch_options = self.config.get_browser_options()
     
+    @retry_async(UIRetryConfigs.navigation())
     async def navigate(self, url: str) -> MCPResult:
-        """Navigate to a URL using Puppeteer MCP."""
+        """Navigate to a URL using Puppeteer MCP with retry and validation."""
         try:
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_navigate", {"url": url})
+            validated_url = validated_params["url"]
+            
             # Start browser session if not already started
             if not self.browser_session:
                 await self._start_browser_session()
             
-            # Use the local Puppeteer MCP server
+            # Use the local Puppeteer MCP server with retry
             result = await self._call_puppeteer_mcp("navigate", {
-                "url": url
+                "url": validated_url
             })
             
             if result.success:
-                logger.info(f"Successfully navigated to {url}")
-                return MCPResult.success_result({"url": url})
+                logger.info(f"Successfully navigated to {validated_url}")
+                return MCPResult.success_result({"url": validated_url})
             else:
                 logger.error(f"Navigation failed: {result.error}")
+                # Mark as retryable if it's a connection issue
+                if "connection" in str(result.error).lower() or "timeout" in str(result.error).lower():
+                    raise RetryableError(f"Navigation failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Navigation validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Navigate error: {e}")
-            return MCPResult.error_result(str(e))
+            # Mark as retryable for unexpected errors
+            raise RetryableError(f"Navigate error: {e}")
     
+    @retry_async(UIRetryConfigs.screenshot())
     async def screenshot(self, name: str, selector: Optional[str] = None) -> MCPResult:
-        """Take a screenshot using Puppeteer MCP."""
+        """Take a screenshot using Puppeteer MCP with retry and validation."""
         try:
             params = {"name": name}
             if selector:
                 params["selector"] = selector
-                
-            result = await self._call_puppeteer_mcp("screenshot", params)
+            
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_screenshot", params)
+            
+            result = await self._call_puppeteer_mcp("screenshot", validated_params)
             
             if result.success:
-                logger.info(f"Screenshot captured: {name}")
-                return MCPResult.success_result({"name": name, "path": result.data})
+                logger.info(f"Screenshot captured: {validated_params['name']}")
+                return MCPResult.success_result({"name": validated_params['name'], "path": result.data})
             else:
                 logger.error(f"Screenshot failed: {result.error}")
+                # Mark as retryable for file system issues
+                if "permission" in str(result.error).lower() or "disk" in str(result.error).lower():
+                    raise RetryableError(f"Screenshot failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Screenshot validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Screenshot error: {e}")
-            return MCPResult.error_result(str(e))
+            raise RetryableError(f"Screenshot error: {e}")
     
+    @retry_async(UIRetryConfigs.mcp_call())
     async def click(self, selector: str) -> MCPResult:
-        """Click an element using Puppeteer MCP."""
+        """Click an element using Puppeteer MCP with retry and validation."""
         try:
-            result = await self._call_puppeteer_mcp("click", {
-                "selector": selector
-            })
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_click", {"selector": selector})
+            
+            result = await self._call_puppeteer_mcp("click", validated_params)
             
             if result.success:
-                logger.info(f"Clicked element: {selector}")
-                return MCPResult.success_result({"selector": selector})
+                logger.info(f"Clicked element: {validated_params['selector']}")
+                return MCPResult.success_result({"selector": validated_params['selector']})
             else:
                 logger.error(f"Click failed: {result.error}")
+                # Mark as retryable for element not found or timing issues
+                if "not found" in str(result.error).lower() or "timeout" in str(result.error).lower():
+                    raise RetryableError(f"Click failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Click validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Click error: {e}")
-            return MCPResult.error_result(str(e))
+            raise RetryableError(f"Click error: {e}")
     
+    @retry_async(UIRetryConfigs.mcp_call())
     async def fill(self, selector: str, value: str) -> MCPResult:
-        """Fill an input field using Puppeteer MCP."""
+        """Fill an input field using Puppeteer MCP with retry and validation."""
         try:
-            result = await self._call_puppeteer_mcp("type", {
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_fill", {
                 "selector": selector,
-                "text": value
+                "value": value
+            })
+            
+            result = await self._call_puppeteer_mcp("type", {
+                "selector": validated_params["selector"],
+                "text": validated_params["value"]
             })
             
             if result.success:
-                logger.info(f"Filled input {selector}: {value}")
-                return MCPResult.success_result({"selector": selector, "value": value})
+                # Don't log the actual value for security
+                logger.info(f"Filled input {validated_params['selector']}")
+                return MCPResult.success_result({
+                    "selector": validated_params['selector'], 
+                    "value": "[FILLED]"  # Don't return actual value
+                })
             else:
-                logger.error(f"Fill failed: {result.error}")  
+                logger.error(f"Fill failed: {result.error}")
+                # Mark as retryable for element not found or timing issues  
+                if "not found" in str(result.error).lower() or "timeout" in str(result.error).lower():
+                    raise RetryableError(f"Fill failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Fill validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Fill error: {e}")
-            return MCPResult.error_result(str(e))
+            raise RetryableError(f"Fill error: {e}")
     
+    @retry_async(UIRetryConfigs.mcp_call())
     async def evaluate(self, script: str) -> MCPResult:
-        """Execute JavaScript using Puppeteer MCP."""
+        """Execute JavaScript using Puppeteer MCP with retry and validation."""
         try:
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_evaluate", {"script": script})
+            
             result = await self._call_puppeteer_mcp("evaluate", {
-                "expression": script
+                "expression": validated_params["script"]
             })
             
             if result.success:
-                logger.info(f"JavaScript executed successfully")
+                logger.info("JavaScript executed successfully")
                 return MCPResult.success_result(result.data)
             else:
                 logger.error(f"JavaScript execution failed: {result.error}")
+                # Mark as retryable for page not ready issues
+                if "page" in str(result.error).lower() or "context" in str(result.error).lower():
+                    raise RetryableError(f"JavaScript execution failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Evaluate validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Evaluate error: {e}")
-            return MCPResult.error_result(str(e))
+            raise RetryableError(f"Evaluate error: {e}")
     
-    async def wait_for_selector(self, selector: str, timeout: int = 30000) -> MCPResult:
-        """Wait for an element to appear using Puppeteer MCP."""
+    async def wait_for_selector(self, selector: str, timeout: Optional[int] = None) -> MCPResult:
+        """Wait for an element to appear using Puppeteer MCP with configuration-based timeout."""
         try:
+            # Use configured timeout if not specified
+            if timeout is None:
+                timeout = self.config.default_timeout
+            
+            # Validate parameters
+            validated_params = self.security_manager.validate_mcp_params("puppeteer_click", {"selector": selector})
+            
             result = await self._call_puppeteer_mcp("waitForSelector", {
-                "selector": selector,
+                "selector": validated_params["selector"],
                 "timeout": timeout
             })
             
             if result.success:
-                logger.info(f"Element found: {selector}")
-                return MCPResult.success_result({"selector": selector})
+                logger.info(f"Element found: {validated_params['selector']}")
+                return MCPResult.success_result({"selector": validated_params["selector"]})
             else:
                 logger.error(f"Element wait failed: {result.error}")
                 return result
                 
+        except (ValueError, RuntimeError) as e:
+            # Security validation errors - don't retry
+            logger.error(f"Wait for selector validation error: {e}")
+            return MCPResult.error_result(str(e))
         except Exception as e:
             logger.error(f"Wait for selector error: {e}")
             return MCPResult.error_result(str(e))

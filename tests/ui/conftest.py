@@ -16,7 +16,7 @@ from .mcp_adapter import mcp_tool_call, cleanup_mcp, MCPResult
 
 @dataclass
 class BrowserConfig:
-    """Configuration for browser automation tests."""
+    """Legacy browser configuration - migrated to config.py."""
     headless: bool = True
     viewport: Dict[str, int] = None
     timeout: int = 30000  # 30 seconds
@@ -26,6 +26,17 @@ class BrowserConfig:
     def __post_init__(self):
         if self.viewport is None:
             self.viewport = {"width": 1280, "height": 720}
+    
+    @classmethod
+    def from_ui_config(cls, ui_config):
+        """Create BrowserConfig from UITestConfig for backward compatibility."""
+        return cls(
+            headless=ui_config.headless,
+            viewport=ui_config.get_viewport(),
+            timeout=ui_config.default_timeout,
+            dashboard_url=ui_config.dashboard_url,
+            dashboard_api_key=ui_config.dashboard_api_key
+        )
 
 
 class PuppeteerMCPManager:
@@ -138,13 +149,16 @@ class PuppeteerMCPManager:
 
 
 @pytest.fixture(scope="session")
-def browser_config():
-    """Browser configuration fixture."""
-    return BrowserConfig(
-        headless=os.getenv("UI_TEST_HEADLESS", "true").lower() == "true",
-        dashboard_url=os.getenv("DASHBOARD_URL", "http://localhost:8000"),
-        dashboard_api_key=os.getenv("DASHBOARD_API_KEY", "miclavesegura45mil")
-    )
+def ui_test_config():
+    """UI test configuration fixture."""
+    from .config import get_config
+    return get_config()
+
+
+@pytest.fixture(scope="session")  
+def browser_config(ui_test_config):
+    """Browser configuration fixture with backward compatibility."""
+    return BrowserConfig.from_ui_config(ui_test_config)
 
 
 @pytest.fixture(scope="session")
