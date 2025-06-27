@@ -2,7 +2,17 @@
 """Configuration management for Recovery Agent."""
 import os
 from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, Any, Optional, List
+
+
+class RecoveryTier(Enum):
+    """Message processing priority tiers based on age."""
+
+    TIER_1 = "TIER_1"  # <2h - high priority, immediate
+    TIER_2 = "TIER_2"  # 2-6h - medium priority, batch
+    TIER_3 = "TIER_3"  # 6-12h - low priority, controlled
+    SKIP = "SKIP"  # >12h - auto-skip, log only
 
 
 @dataclass
