@@ -291,23 +291,117 @@ Monitorear recursos del sistema
 
 **Goal**: Complete workflows and improved testing infrastructure
 
-### Issue #13: Complete Workflow Tests
-**Labels**: `epic:e2e`, `priority:low`, `type:testing`
+### Issue #13: Complete Workflow Tests (Updated with Puppeteer MCP)
+**Labels**: `epic:e2e`, `priority:medium`, `type:testing`, `enhancement:ui-testing`
 
 #### Objetivo
-Verificar workflows completos end-to-end
+Verificar workflows completos end-to-end incluyendo UI automation con Puppeteer MCP
 
 #### Criterios de aceptación
-- [ ] New user onboarding flow funciona
-- [ ] Message review and approval flow funciona
-- [ ] User quarantine flow funciona
+- [ ] New user onboarding flow funciona (backend + frontend)
+- [ ] Message review and approval flow funciona (dashboard UI testing)
+- [ ] User quarantine flow funciona (UI + API testing)
 - [ ] Recovery after downtime funciona
+- [ ] Dashboard UI responde correctamente en diferentes browsers
+- [ ] Visual regression testing detecta cambios inesperados
+- [ ] Cross-browser compatibility verificada
 
-#### Tareas
+#### Tareas Backend (Existing)
 - [ ] Implementar `tests/e2e/test_complete_workflows.py`
-- [ ] Test de user onboarding
-- [ ] Test de review/approval flow
-- [ ] Test de quarantine workflow
+- [ ] Test de user onboarding (API level)
+- [ ] Test de review/approval flow (API level)
+- [ ] Test de quarantine workflow (API level)
+
+#### Tareas Frontend (NEW - Puppeteer MCP)
+- [ ] Configurar Puppeteer MCP para NADIA dashboard testing
+- [ ] Implementar `tests/e2e/test_dashboard_ui.py`
+- [ ] Test de review interface interactivity
+- [ ] Test de message approval workflow (click through)
+- [ ] Test de analytics dashboard rendering
+- [ ] Test de quarantine tab functionality
+- [ ] Visual regression testing con screenshot comparison
+- [ ] Cross-browser testing (Chrome, Firefox, Safari)
+- [ ] Mobile responsiveness testing
+
+---
+
+### Issue #16: Puppeteer MCP Dashboard Testing (NEW)
+**Labels**: `epic:e2e`, `priority:medium`, `type:ui-testing`, `enhancement:new-tool`
+
+#### Objetivo
+Implementar testing automatizado del dashboard web usando Puppeteer MCP para validación UI completa
+
+#### Criterios de aceptación
+- [ ] Puppeteer MCP configurado y funcional
+- [ ] Dashboard UI testing automatizado
+- [ ] Visual regression testing implementado
+- [ ] Cross-browser compatibility testing
+- [ ] Integration con CI/CD pipeline
+
+#### Tareas Técnicas
+- [ ] Instalar y configurar Puppeteer MCP server
+- [ ] Crear `tests/ui/` directory structure
+- [ ] Implementar `tests/ui/test_dashboard_interface.py`
+- [ ] Configurar screenshot baseline para visual regression
+- [ ] Implementar page object models para dashboard
+- [ ] Test de responsive design (mobile/tablet/desktop)
+
+#### Dashboard Test Scenarios
+- [ ] **Review Interface Testing**
+  - Load review queue correctamente
+  - Message approval button functionality
+  - Edit reviewer notes functionality
+  - Keyboard shortcuts (Ctrl+Enter, Escape)
+- [ ] **Analytics Dashboard Testing**
+  - Charts render correctamente
+  - Filter functionality works
+  - Data refresh mechanisms
+  - Export functionality
+- [ ] **Quarantine Tab Testing**
+  - User list loads correctly
+  - Batch operations work
+  - Modal dialogs function properly
+  - Search and filter functionality
+- [ ] **Recovery Tab Testing** 
+  - Recovery status displays correctly
+  - Manual trigger buttons work
+  - Health metrics update
+
+#### Visual Regression Testing
+- [ ] Capture baseline screenshots for all dashboard states
+- [ ] Automated comparison on each test run
+- [ ] Diff highlighting for visual changes
+- [ ] Integration con PR review process
+
+#### Performance & Compatibility
+- [ ] Page load time monitoring (<3 seconds)
+- [ ] Cross-browser testing (Chrome, Firefox, Safari, Edge)
+- [ ] Mobile responsiveness validation
+- [ ] Accessibility testing (WCAG compliance)
+
+#### Puppeteer MCP Integration Points
+```python
+# Example test structure
+tests/ui/
+├── conftest.py              # Puppeteer MCP setup
+├── test_dashboard_core.py    # Core dashboard functionality  
+├── test_review_workflow.py   # Message review UI flow
+├── test_analytics_ui.py      # Analytics dashboard
+├── test_quarantine_ui.py     # Quarantine management
+├── test_recovery_ui.py       # Recovery dashboard
+├── test_visual_regression.py # Screenshot comparison
+└── page_objects/            # Page object models
+    ├── dashboard_page.py
+    ├── review_page.py
+    └── analytics_page.py
+```
+
+#### Success Metrics
+- **UI Coverage**: 90%+ dashboard functionality tested
+- **Visual Accuracy**: Zero unintended visual regressions
+- **Cross-Browser**: 100% compatibility Chrome/Firefox/Safari
+- **Performance**: <3s page load, <1s interaction response
+- **CI Integration**: UI tests run on every PR
 
 ---
 
@@ -375,8 +469,8 @@ Crear un pipeline de CI robusto que detecte problemas temprano
 
 ### Phase 5: Polish (Week 5)
 - **Epic 5**: End-to-End & Infrastructure
-- **Goal**: Complete workflows and dev experience
-- **Issues**: #13, #14, #15
+- **Goal**: Complete workflows, UI testing, and dev experience
+- **Issues**: #13, #14, #15, #16 (NEW: Puppeteer MCP)
 
 ## Success Metrics
 
