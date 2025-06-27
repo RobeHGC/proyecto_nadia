@@ -3,6 +3,7 @@
 import asyncio
 import time
 import json
+import os
 import psutil
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
@@ -15,6 +16,34 @@ from database.models import DatabaseManager
 from agents.supervisor_agent import SupervisorAgent
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
+from tests.config.resilience_config import (
+    get_load_test_config, 
+    get_performance_benchmark,
+    is_test_environment_safe,
+    get_test_timeout
+)
+
+# Environment Safety Check
+def ensure_test_environment():
+    """Ensure tests are not running in production environment."""
+    if not is_test_environment_safe():
+        pytest.skip("Resilience tests not allowed in production environment")
+
+# Performance Metrics Storage
+def save_performance_metrics(test_name: str, metrics: Dict[str, Any]):
+    """Save performance metrics for CI/CD analysis."""
+    results_dir = "test_results"
+    os.makedirs(results_dir, exist_ok=True)
+    
+    result_file = os.path.join(results_dir, f"{test_name}_performance.json")
+    
+    # Add timestamp and environment info
+    metrics['timestamp'] = datetime.now().isoformat()
+    metrics['environment'] = os.getenv('ENVIRONMENT', 'local')
+    metrics['test_name'] = test_name
+    
+    with open(result_file, 'w') as f:
+        json.dump(metrics, f, indent=2, default=str)
 
 
 class LoadTestingFramework:
@@ -205,27 +234,88 @@ def load_tester():
 
 
 class TestLoadPerformance:
-    """Test suite for load and performance testing."""
+    """Test suite for load and performance testing.
+    
+    This test suite validates system performance under various load conditions,
+    from light everyday usage to stress scenarios that may occur during peak usage
+    or system recovery operations.
+    """
+    
+    def setup_method(self):
+        """Setup for each test method."""
+        ensure_test_environment()
     
     @pytest.mark.asyncio
+    @pytest.mark.load_test
+    @pytest.mark.light_load
     async def test_message_burst_light_load(self, load_tester):
-        """Test system under light burst load (50 messages in 10 seconds)."""
-        result = await load_tester.simulate_message_burst(count=50, duration_seconds=10)
+        """Test system under light burst load.
+        
+        Scenario: Simulates normal daily usage with 50 messages spread over 10 seconds.
+        This represents typical user activity during regular operation periods.
+        
+        Expected: System should handle this load easily with minimal latency increase.
+        Success Criteria:
+        - 90%+ success rate (≥45/50 messages processed)
+        - Error rate <10%
+        - Throughput ≥4.5 msg/s
+        - Average response time <2s
+        """
+        config = get_load_test_config("light_load")
+        burst_config = config["message_burst"]
+        
+        result = await load_tester.simulate_message_burst(
+            count=burst_config["count"], 
+            duration_seconds=burst_config["duration_seconds"]
+        )
+        
+        # Get performance benchmarks
+        benchmarks = get_performance_benchmark("response_time")
+        throughput_benchmarks = get_performance_benchmark("throughput")
+        error_benchmarks = get_performance_benchmark("error_rates")
         
         # Performance assertions
         assert result['successful'] >= 45, f"Too many failures: {result['failed']}/50"
-        assert result['error_rate'] < 0.1, f"Error rate too high: {result['error_rate']}"
+        assert result['error_rate'] < error_benchmarks["normal_load_max"], f"Error rate too high: {result['error_rate']}"
         assert result['throughput'] >= 4.5, f"Throughput too low: {result['throughput']} msg/s"
         
         # Response time assertions
         if result['response_times']:
             avg_response_time = sum(result['response_times']) / len(result['response_times'])
-            assert avg_response_time < 2.0, f"Average response time too high: {avg_response_time}s"
+            assert avg_response_time < benchmarks["normal_load_max"], f"Average response time too high: {avg_response_time}s"
+        
+        # Save metrics for CI/CD analysis
+        save_performance_metrics("message_burst_light_load", {
+            "successful_messages": result['successful'],
+            "error_rate": result['error_rate'], 
+            "throughput": result['throughput'],
+            "avg_response_time": avg_response_time if result['response_times'] else None,
+            "benchmark_met": True
+        })
     
     @pytest.mark.asyncio
+    @pytest.mark.load_test
+    @pytest.mark.medium_load
     async def test_message_burst_medium_load(self, load_tester):
-        """Test system under medium burst load (100 messages in 15 seconds)."""
-        result = await load_tester.simulate_message_burst(count=100, duration_seconds=15)
+        """Test system under medium burst load.
+        
+        Scenario: Simulates elevated usage with 100 messages over 15 seconds.
+        This represents busy periods or moderate recovery operations.
+        
+        Expected: System should handle increased load with acceptable degradation.
+        Success Criteria:
+        - 90%+ success rate (≥90/100 messages processed)
+        - Error rate <10%
+        - Throughput ≥6 msg/s
+        - Average response time <3s, max response time <10s
+        """
+        config = get_load_test_config("medium_load")
+        burst_config = config["message_burst"]
+        
+        result = await load_tester.simulate_message_burst(
+            count=burst_config["count"], 
+            duration_seconds=burst_config["duration_seconds"]
+        )
         
         # Performance assertions
         assert result['successful'] >= 90, f"Too many failures: {result['failed']}/100"
