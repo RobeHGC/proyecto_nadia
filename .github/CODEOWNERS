@@ -1,0 +1,24 @@
+# CODEOWNERS for NADIA HITL Project
+# These owners will be requested for review when someone opens a pull request.
+
+# Global owner - all files
+* @RobeHGC
+
+# Critical core files require extra attention
+/agents/ @RobeHGC
+/api/server.py @RobeHGC
+/database/ @RobeHGC
+/userbot.py @RobeHGC
+
+# Security-sensitive files
+/.github/ @RobeHGC
+/SECURITY.md @RobeHGC
+/.env.example @RobeHGC
+
+# Configuration files
+/utils/config.py @RobeHGC
+/CLAUDE.md @RobeHGC
+
+# Test infrastructure (for quality assurance)
+/tests/ @RobeHGC
+/pytest.ini @RobeHGC
