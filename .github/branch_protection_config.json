@@ -1,0 +1,38 @@
+{
+  "protection_rules": {
+    "branch": "master",
+    "required_status_checks": {
+      "strict": true,
+      "contexts": []
+    },
+    "enforce_admins": true,
+    "required_pull_request_reviews": {
+      "required_approving_review_count": 1,
+      "dismiss_stale_reviews": true,
+      "require_code_owner_reviews": false,
+      "require_last_push_approval": false
+    },
+    "restrictions": null,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "block_creations": false,
+    "required_conversation_resolution": true
+  },
+  "recommended_settings": {
+    "description": "Protection rules for NADIA HITL project master branch",
+    "reasoning": {
+      "required_reviews": "Prevents accidental merges, ensures code quality",
+      "dismiss_stale_reviews": "Forces re-review when code changes after approval", 
+      "enforce_admins": "Even admins must follow the rules",
+      "conversation_resolution": "Ensures all PR discussions are resolved"
+    },
+    "future_additions": {
+      "status_checks": [
+        "ci/tests",
+        "ci/lint", 
+        "ci/security-scan"
+      ],
+      "note": "Add these when CI/CD pipeline is implemented"
+    }
+  }
+}

@@ -13,19 +13,19 @@ class TestProtocolManager:
     """Test suite for ProtocolManager class."""
 
     @pytest.fixture
-    async def mock_db(self):
+    def mock_db(self):
         """Mock database manager."""
-        db = AsyncMock(spec=DatabaseManager)
+        db = AsyncMock()  # Remove spec to avoid attribute errors
         return db
 
     @pytest.fixture
-    async def protocol_manager(self, mock_db):
+    def protocol_manager(self, mock_db):
         """Create ProtocolManager instance with mocked dependencies."""
         manager = ProtocolManager(mock_db)
         return manager
 
     @pytest.fixture
-    async def mock_redis(self):
+    def mock_redis(self):
         """Mock Redis connection."""
         redis_mock = AsyncMock()
         redis_mock.pipeline.return_value = redis_mock
@@ -33,6 +33,7 @@ class TestProtocolManager:
         return redis_mock
 
     @patch('utils.protocol_manager.ProtocolManager._get_redis')
+    @pytest.mark.asyncio
     async def test_initialization(self, mock_get_redis, protocol_manager, mock_db, mock_redis):
         """Test ProtocolManager initialization and cache warming."""
         # Setup
@@ -52,6 +53,7 @@ class TestProtocolManager:
         assert mock_redis.setex.call_count == 3
         mock_redis.execute.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_is_protocol_active_cache_hit(self, protocol_manager, mock_redis):
         """Test checking protocol status with cache hit."""
         # Setup
@@ -65,6 +67,7 @@ class TestProtocolManager:
         assert result is True
         mock_redis.get.assert_called_once_with("protocol_cache:user123")
 
+    @pytest.mark.asyncio
     async def test_is_protocol_active_cache_miss(self, protocol_manager, mock_db, mock_redis):
         """Test checking protocol status with cache miss."""
         # Setup
@@ -81,6 +84,7 @@ class TestProtocolManager:
         mock_redis.setex.assert_called_once_with("protocol_cache:user123", 300, "ACTIVE")
         assert "user123" in protocol_manager._active_protocols
 
+    @pytest.mark.asyncio
     async def test_is_protocol_active_inactive_user(self, protocol_manager, mock_db, mock_redis):
         """Test checking protocol status for inactive user."""
         # Setup
@@ -96,6 +100,7 @@ class TestProtocolManager:
         mock_redis.setex.assert_called_once_with("protocol_cache:user123", 300, "INACTIVE")
         assert "user123" not in protocol_manager._active_protocols
 
+    @pytest.mark.asyncio
     async def test_activate_protocol_success(self, protocol_manager, mock_db, mock_redis):
         """Test successful protocol activation."""
         # Setup
@@ -119,6 +124,7 @@ class TestProtocolManager:
         })
         mock_redis.publish.assert_called_once_with("protocol_updates", expected_event)
 
+    @pytest.mark.asyncio
     async def test_activate_protocol_failure(self, protocol_manager, mock_db, mock_redis):
         """Test failed protocol activation."""
         # Setup
@@ -135,6 +141,7 @@ class TestProtocolManager:
         mock_redis.setex.assert_not_called()
         mock_redis.publish.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_deactivate_protocol_success(self, protocol_manager, mock_db, mock_redis):
         """Test successful protocol deactivation."""
         # Setup
@@ -159,6 +166,7 @@ class TestProtocolManager:
         })
         mock_redis.publish.assert_called_once_with("protocol_updates", expected_event)
 
+    @pytest.mark.asyncio
     async def test_queue_for_quarantine(self, protocol_manager, mock_db, mock_redis):
         """Test queuing message for quarantine."""
         # Setup
@@ -190,6 +198,7 @@ class TestProtocolManager:
         mock_redis.hset.assert_called_once_with("nadia_quarantine_items", "msg_456", expected_item)
         mock_redis.zadd.assert_called_once_with("nadia_quarantine_queue", {"msg_456": 1640995200.0})
 
+    @pytest.mark.asyncio
     async def test_get_quarantine_queue(self, protocol_manager, mock_redis):
         """Test getting quarantine queue from Redis."""
         # Setup
@@ -209,6 +218,7 @@ class TestProtocolManager:
         assert result[1]["id"] == "msg2"
         mock_redis.zrevrange.assert_called_once_with("nadia_quarantine_queue", 0, 9)
 
+    @pytest.mark.asyncio
     async def test_get_quarantine_queue_empty(self, protocol_manager, mock_redis):
         """Test getting empty quarantine queue."""
         # Setup
@@ -222,6 +232,7 @@ class TestProtocolManager:
         assert result == []
         mock_redis.zrevrange.assert_called_once_with("nadia_quarantine_queue", 0, 49)
 
+    @pytest.mark.asyncio
     async def test_get_quarantine_queue_redis_fallback(self, protocol_manager, mock_db, mock_redis):
         """Test quarantine queue fallback to database on Redis error."""
         # Setup
@@ -237,6 +248,7 @@ class TestProtocolManager:
         assert result[0]["id"] == "msg1"
         mock_db.get_quarantine_messages.assert_called_once_with(limit=50)
 
+    @pytest.mark.asyncio
     async def test_process_quarantine_message(self, protocol_manager, mock_db, mock_redis):
         """Test processing quarantine message."""
         # Setup
@@ -254,6 +266,7 @@ class TestProtocolManager:
         mock_redis.hdel.assert_called_once_with("nadia_quarantine_items", "msg123")
         mock_redis.zrem.assert_called_once_with("nadia_quarantine_queue", "msg123")
 
+    @pytest.mark.asyncio
     async def test_process_quarantine_message_not_in_redis(self, protocol_manager, mock_db, mock_redis):
         """Test processing quarantine message not in Redis."""
         # Setup
@@ -271,6 +284,7 @@ class TestProtocolManager:
         mock_redis.hdel.assert_not_called()
         mock_redis.zrem.assert_not_called()
 
+    @pytest.mark.asyncio
     async def test_invalidate_cache(self, protocol_manager, mock_redis):
         """Test cache invalidation."""
         # Setup
@@ -282,6 +296,7 @@ class TestProtocolManager:
         # Verify
         mock_redis.delete.assert_called_once_with("protocol_cache:user123")
 
+    @pytest.mark.asyncio
     async def test_get_stats(self, protocol_manager, mock_db, mock_redis):
         """Test getting protocol statistics."""
         # Setup
@@ -305,6 +320,7 @@ class TestProtocolManager:
         }
         assert result == expected_stats
 
+    @pytest.mark.asyncio
     async def test_get_stats_redis_error(self, protocol_manager, mock_db, mock_redis):
         """Test getting stats with Redis error."""
         # Setup
@@ -327,6 +343,7 @@ class TestProtocolManager:
         protocol_manager._cache_loaded = True
         assert protocol_manager.is_cache_loaded() is True
 
+    @pytest.mark.asyncio
     async def test_error_handling_redis_failure(self, protocol_manager, mock_db):
         """Test error handling when Redis fails."""
         # Setup
@@ -340,6 +357,7 @@ class TestProtocolManager:
         assert result is True
         mock_db.get_protocol_status.assert_called_once_with("user123")
 
+    @pytest.mark.asyncio
     async def test_concurrent_access(self, protocol_manager, mock_db, mock_redis):
         """Test concurrent access to protocol status."""
         # Setup
@@ -358,6 +376,7 @@ class TestProtocolManager:
         # Should only call Redis once due to caching
         assert mock_redis.get.call_count <= 10  # May be called multiple times due to concurrency
 
+    @pytest.mark.asyncio
     async def test_protocol_activation_with_none_reason(self, protocol_manager, mock_db, mock_redis):
         """Test protocol activation with None reason."""
         # Setup

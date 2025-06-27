@@ -9,20 +9,11 @@ from typing import Any, Dict, List, Optional
 
 from agents.supervisor_agent import SupervisorAgent
 from database.models import DatabaseManager
-from utils.recovery_config import RecoveryConfig
+from utils.recovery_config import RecoveryConfig, RecoveryTier
 from utils.redis_mixin import RedisConnectionMixin
 from utils.telegram_history import TelegramHistoryManager
 
 logger = logging.getLogger(__name__)
-
-
-class MessagePriority(Enum):
-    """Message processing priority tiers based on age."""
-
-    TIER_1 = "TIER_1"  # <2h - high priority, immediate
-    TIER_2 = "TIER_2"  # 2-6h - medium priority, batch
-    TIER_3 = "TIER_3"  # 6-12h - low priority, controlled
-    SKIP = "SKIP"  # >12h - auto-skip, log only
 
 
 @dataclass
@@ -33,7 +24,7 @@ class RecoveredMessage:
     telegram_date: datetime
     user_id: str
     message_text: str
-    priority: MessagePriority
+    priority: RecoveryTier
     age_hours: float
 
 
@@ -41,7 +32,7 @@ class RecoveredMessage:
 class RecoveryBatch:
     """Batch of messages for processing."""
 
-    priority: MessagePriority
+    priority: RecoveryTier
     messages: List[RecoveredMessage]
     batch_delay: float  # seconds between messages in batch
     user_id: str
@@ -258,7 +249,7 @@ class RecoveryAgent(RedisConnectionMixin):
                     age_hours = (datetime.now() - msg["date"]).total_seconds() / 3600
                     priority = self._classify_message_priority(age_hours)
 
-                    if priority == MessagePriority.SKIP:
+                    if priority == RecoveryTier.SKIP:
                         stats["skipped"] += 1
                         logger.info(
                             f"Skipping message {msg['id']} (age: {age_hours:.1f}h)"
@@ -305,16 +296,16 @@ class RecoveryAgent(RedisConnectionMixin):
                 stats["errors"] += 1
                 return stats
 
-    def _classify_message_priority(self, age_hours: float) -> MessagePriority:
+    def _classify_message_priority(self, age_hours: float) -> RecoveryTier:
         """Classify message priority based on age."""
         if age_hours > self.config.max_message_age_hours:
-            return MessagePriority.SKIP
+            return RecoveryTier.SKIP
         elif age_hours <= 2:
-            return MessagePriority.TIER_1
+            return RecoveryTier.TIER_1
         elif age_hours <= 12:
-            return MessagePriority.TIER_2
+            return RecoveryTier.TIER_2
         else:
-            return MessagePriority.TIER_3
+            return RecoveryTier.TIER_3
 
     def _create_priority_batches(
         self, messages: List[RecoveredMessage], user_id: str
@@ -331,9 +322,9 @@ class RecoveryAgent(RedisConnectionMixin):
 
         # Create batches with appropriate delays
         for priority, msgs in priority_groups.items():
-            if priority == MessagePriority.TIER_1:
+            if priority == RecoveryTier.TIER_1:
                 batch_delay = 0.5  # Fast processing
-            elif priority == MessagePriority.TIER_2:
+            elif priority == RecoveryTier.TIER_2:
                 batch_delay = 2.0  # Medium delay
             else:  # TIER_3
                 batch_delay = 5.0  # Slow processing
@@ -351,9 +342,9 @@ class RecoveryAgent(RedisConnectionMixin):
 
         # Sort batches by priority (TIER_1 first)
         priority_order = {
-            MessagePriority.TIER_1: 1,
-            MessagePriority.TIER_2: 2,
-            MessagePriority.TIER_3: 3,
+            RecoveryTier.TIER_1: 1,
+            RecoveryTier.TIER_2: 2,
+            RecoveryTier.TIER_3: 3,
         }
         batches.sort(key=lambda b: priority_order[b.priority])
 
@@ -417,13 +408,13 @@ class RecoveryAgent(RedisConnectionMixin):
 
                 # Assign priority based on age (max 12 hours)
                 if age_hours < 2:
-                    priority = MessagePriority.TIER_1
+                    priority = RecoveryTier.TIER_1
                 elif age_hours < 6:
-                    priority = MessagePriority.TIER_2
+                    priority = RecoveryTier.TIER_2
                 elif age_hours < 12:
-                    priority = MessagePriority.TIER_3
+                    priority = RecoveryTier.TIER_3
                 else:
-                    priority = MessagePriority.SKIP
+                    priority = RecoveryTier.SKIP
                     stats["messages_skipped"] += 1
                     logger.debug(
                         f"⏰ Skipping old message (age: {age_hours:.1f}h > 12h limit)"
@@ -473,9 +464,9 @@ class RecoveryAgent(RedisConnectionMixin):
 
         # Sort all batches by priority across all users (TIER_1 from all users first)
         priority_order = {
-            MessagePriority.TIER_1: 1,
-            MessagePriority.TIER_2: 2,
-            MessagePriority.TIER_3: 3,
+            RecoveryTier.TIER_1: 1,
+            RecoveryTier.TIER_2: 2,
+            RecoveryTier.TIER_3: 3,
         }
         all_batches.sort(key=lambda b: priority_order[b.priority])
 
