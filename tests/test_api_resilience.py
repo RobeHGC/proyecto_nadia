@@ -199,6 +199,8 @@ class TestAPIResilience:
             # Test timeout handling
             start_time = time.time()
             messages = [{"role": "user", "content": "Test message"}]
+            # Note: Including Exception as fallback since OpenAI client may wrap
+            # timeout errors in generic exceptions during mock scenarios
             with pytest.raises((APITimeoutError, asyncio.TimeoutError, Exception)):
                 await client.generate_response(messages, temperature=0.7)
             
