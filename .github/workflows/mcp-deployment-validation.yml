@@ -1,0 +1,410 @@
+name: MCP Deployment Validation
+
+on:
+  workflow_run:
+    workflows: ["MCP Security Gate"]
+    types:
+      - completed
+    branches: [main, develop]
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  validate-deployment:
+    name: 🚀 Deployment Validation
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nadia_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Setup test environment
+      run: |
+        chmod +x scripts/mcp-workflow.sh
+        chmod +x scripts/deployment-health-check.sh
+        mkdir -p logs
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost/nadia_test
+        REDIS_URL: redis://localhost:6379
+        
+    - name: Run database migrations
+      run: |
+        python -m alembic upgrade head
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost/nadia_test
+        
+    - name: Start API server
+      run: |
+        PYTHONPATH=$PWD python -m api.server &
+        echo $! > api_server.pid
+        sleep 10  # Wait for server to start
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost/nadia_test
+        REDIS_URL: redis://localhost:6379
+        API_PORT: 8000
+        
+    - name: 🔍 MCP Health Validation
+      id: health-check
+      run: |
+        echo "::group::MCP Health Check"
+        
+        # Wait for API to be ready
+        timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 2; done'
+        
+        # Run comprehensive health check
+        ./scripts/mcp-workflow.sh health-check
+        
+        echo "::endgroup::"
+        
+    - name: 📊 Performance Baseline
+      id: performance-check
+      run: |
+        echo "::group::Performance Baseline"
+        
+        # Create performance baseline
+        ./scripts/mcp-workflow.sh perf-baseline
+        
+        # Basic performance tests
+        echo "Running basic performance tests..."
+        
+        # API response time test
+        response_time=$(curl -o /dev/null -s -w '%{time_total}' http://localhost:8000/health)
+        echo "Health endpoint response time: ${response_time}s"
+        
+        # Check if response time is acceptable (< 2 seconds)
+        if (( $(echo "$response_time > 2.0" | bc -l) )); then
+          echo "❌ Health endpoint too slow: ${response_time}s"
+          exit 1
+        else
+          echo "✅ Health endpoint response time acceptable: ${response_time}s"
+        fi
+        
+        echo "::endgroup::"
+        
+    - name: 🗄️ Database Validation
+      id: db-validation
+      run: |
+        echo "::group::Database Validation"
+        
+        python3 -c "
+import asyncio
+from database.models import DatabaseManager
+import os
+
+async def validate_db():
+    db_url = os.getenv('DATABASE_URL')
+    db = DatabaseManager(db_url)
+    
+    try:
+        # Test basic operations
+        async with db._pool.acquire() as conn:
+            # Check if tables exist
+            tables = await conn.fetch(\"\"\"
+                SELECT table_name FROM information_schema.tables 
+                WHERE table_schema = 'public'
+            \"\"\")
+            
+            table_names = [row['table_name'] for row in tables]
+            print(f'Found {len(table_names)} tables: {table_names}')
+            
+            # Check critical tables
+            critical_tables = ['conversations', 'user_current_status']
+            for table in critical_tables:
+                if table in table_names:
+                    count = await conn.fetchval(f'SELECT COUNT(*) FROM {table}')
+                    print(f'✅ Table {table}: {count} rows')
+                else:
+                    print(f'❌ Missing critical table: {table}')
+                    exit(1)
+            
+            print('✅ Database validation successful')
+            
+    except Exception as e:
+        print(f'❌ Database validation failed: {e}')
+        exit(1)
+
+asyncio.run(validate_db())
+        "
+        
+        echo "::endgroup::"
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost/nadia_test
+        
+    - name: 🔄 Redis Validation
+      id: redis-validation
+      run: |
+        echo "::group::Redis Validation"
+        
+        python3 -c "
+import asyncio
+import redis.asyncio as redis
+import json
+
+async def validate_redis():
+    try:
+        r = redis.from_url('redis://localhost:6379')
+        
+        # Test basic operations
+        await r.ping()
+        print('✅ Redis ping successful')
+        
+        # Test set/get
+        test_key = 'mcp_test_key'
+        test_value = json.dumps({'test': 'deployment_validation'})
+        
+        await r.set(test_key, test_value, ex=60)
+        result = await r.get(test_key)
+        
+        if result:
+            data = json.loads(result)
+            if data.get('test') == 'deployment_validation':
+                print('✅ Redis set/get operations successful')
+            else:
+                print('❌ Redis data integrity failed')
+                exit(1)
+        else:
+            print('❌ Redis get operation failed')
+            exit(1)
+            
+        # Test Redis queue operations
+        queue_key = 'mcp_test_queue'
+        await r.lpush(queue_key, 'test_message')
+        message = await r.rpop(queue_key)
+        
+        if message and message.decode() == 'test_message':
+            print('✅ Redis queue operations successful')
+        else:
+            print('❌ Redis queue operations failed')
+            exit(1)
+            
+        await r.aclose()
+        print('✅ Redis validation completed')
+        
+    except Exception as e:
+        print(f'❌ Redis validation failed: {e}')
+        exit(1)
+
+asyncio.run(validate_redis())
+        "
+        
+        echo "::endgroup::"
+        
+    - name: 🌐 API Endpoints Validation
+      id: api-validation
+      run: |
+        echo "::group::API Endpoints Validation"
+        
+        # Test health endpoint
+        echo "Testing /health endpoint..."
+        curl -f http://localhost:8000/health | jq '.'
+        
+        # Test MCP health endpoint (with auth if available)
+        echo "Testing /api/mcp/health endpoint..."
+        if [ -n "${{ secrets.API_KEY }}" ]; then
+          curl -f -H "Authorization: Bearer ${{ secrets.API_KEY }}" \
+               http://localhost:8000/api/mcp/health | jq '.'
+        else
+          echo "No API key - skipping authenticated endpoints"
+        fi
+        
+        # Test basic API structure
+        echo "Testing API root..."
+        status_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
+        
+        if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 404 ]; then
+          echo "✅ API server responding (status: $status_code)"
+        else
+          echo "❌ API server not responding properly (status: $status_code)"
+          exit 1
+        fi
+        
+        echo "::endgroup::"
+        
+    - name: 🧪 Integration Tests
+      id: integration-tests
+      run: |
+        echo "::group::Integration Tests"
+        
+        # Run integration tests if they exist
+        if [ -d "tests/integration" ]; then
+          echo "Running integration tests..."
+          pytest tests/integration/ -v --tb=short
+        else
+          echo "No integration tests found - skipping"
+        fi
+        
+        echo "::endgroup::"
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost/nadia_test
+        REDIS_URL: redis://localhost:6379
+        
+    - name: 📈 Generate Deployment Report
+      if: always()
+      run: |
+        echo "::group::Deployment Report"
+        
+        cat > deployment_report.md << EOF
+# MCP Deployment Validation Report
+        
+**Branch**: ${{ github.ref_name }}
+**Commit**: ${{ github.sha }}
+**Timestamp**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+
+## Validation Results
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Health Check | ${{ steps.health-check.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | MCP health validation |
+| Performance | ${{ steps.performance-check.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | Performance baseline creation |
+| Database | ${{ steps.db-validation.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | Database connectivity and schema |
+| Redis | ${{ steps.redis-validation.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | Redis connectivity and operations |
+| API Endpoints | ${{ steps.api-validation.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | API endpoint validation |
+| Integration Tests | ${{ steps.integration-tests.outcome == 'success' && '✅ PASSED' || '❌ FAILED' }} | Integration test suite |
+
+## Performance Metrics
+
+EOF
+        
+        # Add performance data if available
+        if [ -f "perf_baseline_*.json" ]; then
+          echo "### Performance Baseline" >> deployment_report.md
+          echo '```json' >> deployment_report.md
+          cat perf_baseline_*.json >> deployment_report.md
+          echo '```' >> deployment_report.md
+        fi
+        
+        # Add MCP logs summary
+        echo "### MCP Health Check Summary" >> deployment_report.md
+        echo '```' >> deployment_report.md
+        tail -20 logs/mcp-health-*.log 2>/dev/null >> deployment_report.md || echo "No MCP logs available" >> deployment_report.md
+        echo '```' >> deployment_report.md
+        
+        cat deployment_report.md
+        
+        echo "::endgroup::"
+        
+    - name: 📤 Upload Deployment Artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-validation-${{ github.run_number }}
+        path: |
+          deployment_report.md
+          logs/mcp-*.log
+          perf_baseline_*.json
+        retention-days: 30
+        
+    - name: 🔄 Stop API Server
+      if: always()
+      run: |
+        if [ -f api_server.pid ]; then
+          kill $(cat api_server.pid) || true
+          rm api_server.pid
+        fi
+        
+    - name: 🎉 Deployment Success Notification
+      if: success()
+      run: |
+        echo "✅ Deployment validation completed successfully"
+        
+        # Send success notification
+        python3 -c "
+import asyncio
+from monitoring.mcp_alert_manager import send_mcp_alert
+
+async def notify():
+    await send_mcp_alert(
+        'deployment_validation_success',
+        f'Deployment validation passed for ${{ github.ref_name }} (${{ github.sha }})',
+        'INFO'
+    )
+
+asyncio.run(notify())
+        " 2>/dev/null || echo "Notification skipped (alert manager not available)"
+        
+        # Slack notification if webhook available
+        if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
+          curl -X POST "${{ secrets.SLACK_WEBHOOK }}" \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"✅ Deployment Validation Passed\",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Repository\", \"value\": \"${{ github.repository }}\", \"short\": true},
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Commit\", \"value\": \"${{ github.sha }}\", \"short\": true},
+                  {\"title\": \"Environment\", \"value\": \"${{ github.ref_name == 'main' && 'Production' || 'Staging' }}\", \"short\": true}
+                ]
+              }]
+            }"
+        fi
+        
+    - name: 🚨 Deployment Failure Notification
+      if: failure()
+      run: |
+        echo "❌ Deployment validation failed"
+        
+        # Send failure notification
+        python3 -c "
+import asyncio
+from monitoring.mcp_alert_manager import send_mcp_alert
+
+async def notify():
+    await send_mcp_alert(
+        'deployment_validation_failure',
+        f'Deployment validation failed for ${{ github.ref_name }} (${{ github.sha }})',
+        'CRITICAL'
+    )
+
+asyncio.run(notify())
+        " 2>/dev/null || echo "Notification skipped (alert manager not available)"
+        
+        # Slack notification if webhook available
+        if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
+          curl -X POST "${{ secrets.SLACK_WEBHOOK }}" \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"❌ Deployment Validation Failed\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Repository\", \"value\": \"${{ github.repository }}\", \"short\": true},
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Commit\", \"value\": \"${{ github.sha }}\", \"short\": true},
+                  {\"title\": \"Failed Steps\", \"value\": \"Check workflow logs for details\", \"short\": false}
+                ]
+              }]
+            }"
+        fi
