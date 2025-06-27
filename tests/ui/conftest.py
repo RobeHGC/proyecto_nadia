@@ -16,7 +16,7 @@ from .mcp_adapter import mcp_tool_call, cleanup_mcp, MCPResult
 
 @dataclass
 class BrowserConfig:
-    """Legacy browser configuration - migrated to config.py."""
+    """Configuration for browser automation tests."""
     headless: bool = True
     viewport: Dict[str, int] = None
     timeout: int = 30000  # 30 seconds
@@ -77,7 +77,6 @@ class PuppeteerMCPManager:
             else:
                 print(f"Navigation failed: {result.error}")
                 return False
-                
         except Exception as e:
             print(f"Navigation failed: {e}")
             return False

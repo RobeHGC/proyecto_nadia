@@ -19,7 +19,6 @@ class TestDashboardCore:
         # Browser state cleanup handled by MCP server
         # Dashboard state cleanup handled by fixtures
         pass
-    
     @pytest.mark.asyncio
     async def test_dashboard_loads_successfully(self, browser_manager, browser_config):
         """Test that the dashboard loads without errors."""

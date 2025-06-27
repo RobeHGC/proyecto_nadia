@@ -1,0 +1,239 @@
+name: MCP Security Gate
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  security-gate:
+    name: 🔒 Security Gate
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Setup MCP environment
+      run: |
+        chmod +x scripts/mcp-workflow.sh
+        mkdir -p logs
+        
+    - name: 🔍 MCP Security Scan
+      id: security-scan
+      run: |
+        echo "::group::MCP Security Scan"
+        ./scripts/mcp-workflow.sh security-check
+        echo "::endgroup::"
+      
+    - name: 🔐 Secrets Detection
+      id: secrets-check
+      run: |
+        echo "::group::Secrets Detection"
+        
+        # Check for potential secrets in code
+        secrets_found=false
+        
+        # API keys and tokens
+        if grep -r "api_key.*=.*['\"][^'\"]\{20,\}['\"]" --include="*.py" --include="*.js" --exclude-dir=".git" . 2>/dev/null; then
+          echo "❌ Potential API keys found"
+          secrets_found=true
+        fi
+        
+        # Hardcoded passwords
+        if grep -r "password.*=.*['\"][^'\"]\{8,\}['\"]" --include="*.py" --include="*.js" --exclude-dir=".git" . 2>/dev/null; then
+          echo "❌ Potential hardcoded passwords found"
+          secrets_found=true
+        fi
+        
+        # JWT tokens
+        if grep -r "eyJ[a-zA-Z0-9]" --include="*.py" --include="*.js" --exclude-dir=".git" . 2>/dev/null; then
+          echo "❌ Potential JWT tokens found"
+          secrets_found=true
+        fi
+        
+        # Check .env files are not committed
+        if find . -name ".env" -not -path "./.git/*" | grep -q .; then
+          echo "❌ .env files found in repository"
+          secrets_found=true
+        fi
+        
+        if [ "$secrets_found" = true ]; then
+          echo "❌ Security issues detected - see output above"
+          exit 1
+        else
+          echo "✅ No secrets detected"
+        fi
+        
+        echo "::endgroup::"
+        
+    - name: 📦 Dependency Security Scan
+      id: deps-scan
+      run: |
+        echo "::group::Dependency Security Scan"
+        
+        pip install safety bandit
+        
+        # Check for vulnerable dependencies
+        echo "Checking for vulnerable dependencies..."
+        safety check --json > safety-report.json || true
+        
+        if [ -s safety-report.json ] && [ "$(cat safety-report.json)" != "[]" ]; then
+          echo "❌ Vulnerable dependencies found:"
+          cat safety-report.json | python3 -m json.tool
+          exit 1
+        else
+          echo "✅ No vulnerable dependencies found"
+        fi
+        
+        # Static security analysis
+        echo "Running static security analysis..."
+        bandit -r . -f json -o bandit-report.json || true
+        
+        if [ -f bandit-report.json ]; then
+          # Check for high/medium severity issues
+          high_issues=$(cat bandit-report.json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+high_count = len([r for r in data.get('results', []) if r.get('issue_severity') in ['HIGH', 'MEDIUM']])
+print(high_count)
+")
+          
+          if [ "$high_issues" -gt 0 ]; then
+            echo "❌ $high_issues high/medium security issues found"
+            cat bandit-report.json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for result in data.get('results', []):
+    if result.get('issue_severity') in ['HIGH', 'MEDIUM']:
+        print(f\"- {result['filename']}:{result['line_number']} - {result['issue_text']}\")
+"
+            exit 1
+          else
+            echo "✅ No critical security issues found"
+          fi
+        fi
+        
+        echo "::endgroup::"
+        
+    - name: 📊 Security Gate Status
+      run: |
+        echo "::group::Security Gate Summary"
+        
+        if [ "${{ steps.security-scan.outcome }}" = "success" ] && \
+           [ "${{ steps.secrets-check.outcome }}" = "success" ] && \
+           [ "${{ steps.deps-scan.outcome }}" = "success" ]; then
+          echo "✅ Security gate PASSED"
+          echo "All security checks completed successfully"
+        else
+          echo "❌ Security gate FAILED"
+          echo "One or more security checks failed"
+          exit 1
+        fi
+        
+        echo "::endgroup::"
+        
+    - name: 📤 Upload Security Reports
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          logs/mcp-security-*.log
+          safety-report.json
+          bandit-report.json
+        retention-days: 30
+        
+    - name: 💬 Comment PR with Results
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          let comment = '## 🔒 MCP Security Gate Results\n\n';
+          
+          // Security scan results
+          if ('${{ steps.security-scan.outcome }}' === 'success') {
+            comment += '✅ **MCP Security Scan**: PASSED\n';
+          } else {
+            comment += '❌ **MCP Security Scan**: FAILED\n';
+          }
+          
+          // Secrets check results
+          if ('${{ steps.secrets-check.outcome }}' === 'success') {
+            comment += '✅ **Secrets Detection**: PASSED\n';
+          } else {
+            comment += '❌ **Secrets Detection**: FAILED\n';
+          }
+          
+          // Dependencies check results
+          if ('${{ steps.deps-scan.outcome }}' === 'success') {
+            comment += '✅ **Dependency Security**: PASSED\n';
+          } else {
+            comment += '❌ **Dependency Security**: FAILED\n';
+          }
+          
+          // Overall status
+          const allPassed = '${{ steps.security-scan.outcome }}' === 'success' && 
+                           '${{ steps.secrets-check.outcome }}' === 'success' && 
+                           '${{ steps.deps-scan.outcome }}' === 'success';
+          
+          comment += '\n---\n';
+          if (allPassed) {
+            comment += '🎉 **Overall Status**: ✅ SECURITY GATE PASSED\n\n';
+            comment += 'This pull request passes all security checks and is safe to merge.';
+          } else {
+            comment += '🚨 **Overall Status**: ❌ SECURITY GATE FAILED\n\n';
+            comment += 'This pull request has security issues that must be resolved before merging.\n';
+            comment += 'Please check the security reports and fix the identified issues.';
+          }
+          
+          await github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+          
+    - name: 🚨 Notify Security Failure
+      if: failure() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+      run: |
+        echo "Security gate failed on protected branch: ${{ github.ref }}"
+        
+        # Send alert if webhook is configured
+        if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
+          curl -X POST "${{ secrets.SLACK_WEBHOOK }}" \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"🚨 Security Gate Failed\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Repository\", \"value\": \"${{ github.repository }}\", \"short\": true},
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Commit\", \"value\": \"${{ github.sha }}\", \"short\": true},
+                  {\"title\": \"Workflow\", \"value\": \"${{ github.workflow }}\", \"short\": true}
+                ]
+              }]
+            }"
+        fi

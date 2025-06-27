@@ -8,7 +8,6 @@ from typing import Dict, List, Optional, Set
 import redis.asyncio as redis
 
 from database.models import DatabaseManager
-from utils.constants import REDIS_URL
 from utils.redis_mixin import RedisConnectionMixin
 
 logger = logging.getLogger(__name__)

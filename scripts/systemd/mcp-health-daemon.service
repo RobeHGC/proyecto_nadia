@@ -1,0 +1,41 @@
+[Unit]
+Description=NADIA MCP Health Check Daemon
+Documentation=file:///home/rober/projects/chatbot_nadia/docs/MCP_DEVELOPER_WORKFLOW.md
+After=network.target redis.service postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=rober
+Group=rober
+WorkingDirectory=/home/rober/projects/chatbot_nadia
+Environment=PYTHONPATH=/home/rober/projects/chatbot_nadia
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/rober/projects/chatbot_nadia/scripts
+ExecStart=/usr/bin/python3 /home/rober/projects/chatbot_nadia/monitoring/mcp_health_daemon.py
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/rober/projects/chatbot_nadia/monitoring
+ReadWritePaths=/home/rober/projects/chatbot_nadia/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcp-health-daemon
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

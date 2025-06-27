@@ -331,6 +331,330 @@ async def health_check():
     }
 
 
+# ====================================================================
+# MCP Health Endpoints
+# ====================================================================
+
+@app.get("/mcp/health")
+@limiter.limit("30/minute")
+async def mcp_health_summary(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get overall MCP health summary."""
+    try:
+        from .mcp_health_api import mcp_api
+        
+        commands = ['health-check', 'security-check', 'redis-health']
+        checks_summary = {}
+        overall_status = 'HEALTHY'
+        latest_timestamp = None
+        active_alert_count = 0
+        
+        # Get status for each command
+        for command in commands:
+            status = await mcp_api.get_latest_health_status(command)
+            if status:
+                checks_summary[command] = {
+                    'status': status.status,
+                    'timestamp': status.timestamp,
+                    'issues_count': len(status.issues),
+                    'alerts_count': len(status.alerts)
+                }
+                
+                # Update overall status (CRITICAL > WARNING > HEALTHY)
+                if status.status == 'CRITICAL':
+                    overall_status = 'CRITICAL'
+                elif status.status == 'WARNING' and overall_status != 'CRITICAL':
+                    overall_status = 'WARNING'
+                
+                # Track latest timestamp
+                if not latest_timestamp or status.timestamp > latest_timestamp:
+                    latest_timestamp = status.timestamp
+                
+                # Count alerts
+                active_alert_count += len(status.alerts)
+        
+        return {
+            'overall_status': overall_status,
+            'last_check': latest_timestamp or datetime.now(timezone.utc).isoformat(),
+            'checks_summary': checks_summary,
+            'active_alerts': active_alert_count
+        }
+    except Exception as e:
+        logger.error(f"Error getting MCP health summary: {e}")
+        return {
+            'overall_status': 'UNKNOWN',
+            'last_check': datetime.now(timezone.utc).isoformat(),
+            'checks_summary': {},
+            'active_alerts': 0,
+            'error': str(e)
+        }
+
+
+@app.get("/mcp/health/{command}")
+@limiter.limit("30/minute")
+async def mcp_command_health(
+    command: str,
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get health status for specific MCP command."""
+    valid_commands = ['health-check', 'security-check', 'redis-health']
+    
+    if command not in valid_commands:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid command. Valid commands: {valid_commands}"
+        )
+    
+    try:
+        from .mcp_health_api import mcp_api
+        
+        status = await mcp_api.get_latest_health_status(command)
+        if not status:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No health data found for {command}"
+            )
+        
+        return {
+            'status': status.status,
+            'timestamp': status.timestamp,
+            'command': status.command,
+            'issues': status.issues,
+            'metrics': status.metrics,
+            'alerts': status.alerts
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting MCP health for {command}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mcp/health/{command}/run")
+@limiter.limit("10/minute")
+async def run_mcp_health_check(
+    command: str,
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Run immediate health check for specific MCP command."""
+    valid_commands = ['health-check', 'security-check', 'redis-health']
+    
+    if command not in valid_commands:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid command. Valid commands: {valid_commands}"
+        )
+    
+    try:
+        from .mcp_health_api import mcp_api
+        
+        # Run immediate check
+        result = await mcp_api.run_health_check(command)
+        
+        # Store result in background
+        try:
+            r = await redis.from_url(config.redis_url)
+            health_record = {
+                'timestamp': result.timestamp,
+                'command': command,
+                'result': {
+                    'success': result.status != 'CRITICAL',
+                    'timestamp': result.timestamp
+                },
+                'analysis': {
+                    'status': result.status,
+                    'issues': result.issues,
+                    'metrics': result.metrics,
+                    'alerts': result.alerts
+                }
+            }
+            await r.lpush(f'mcp_health_{command.replace("-", "_")}', json.dumps(health_record))
+            await r.ltrim(f'mcp_health_{command.replace("-", "_")}', 0, 49)
+            await r.aclose()
+        except Exception as storage_error:
+            logger.warning(f"Failed to store MCP health result: {storage_error}")
+        
+        return {
+            'status': result.status,
+            'timestamp': result.timestamp,
+            'command': result.command,
+            'issues': result.issues,
+            'metrics': result.metrics,
+            'alerts': result.alerts
+        }
+        
+    except Exception as e:
+        logger.error(f"Error running MCP health check for {command}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/mcp/alerts")
+@limiter.limit("30/minute")
+async def get_mcp_alerts(
+    request: Request,
+    limit: int = Query(20, le=100),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get recent MCP health alerts."""
+    try:
+        r = await redis.from_url(config.redis_url)
+        alerts = await r.lrange('health_alerts', 0, limit - 1)
+        await r.aclose()
+        
+        alert_list = []
+        for alert_json in alerts:
+            try:
+                alert_data = json.loads(alert_json)
+                alert_list.append(alert_data)
+            except json.JSONDecodeError:
+                continue
+        
+        return {
+            'alerts': alert_list,
+            'count': len(alert_list)
+        }
+    except Exception as e:
+        logger.error(f"Error getting MCP alerts: {e}")
+        return {
+            'alerts': [],
+            'count': 0,
+            'error': str(e)
+        }
+
+
+@app.get("/mcp/metrics")
+@limiter.limit("30/minute")
+async def get_mcp_metrics(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get MCP health check metrics and statistics."""
+    try:
+        r = await redis.from_url(config.redis_url)
+        
+        # Get metrics for each command
+        commands = ['health-check', 'security-check', 'redis-health']
+        metrics = {}
+        
+        for command in commands:
+            # Get recent results
+            results = await r.lrange(f'mcp_health_{command.replace("-", "_")}', 0, 99)
+            
+            total_checks = len(results)
+            successful_checks = 0
+            failed_checks = 0
+            
+            for result_json in results:
+                try:
+                    data = json.loads(result_json)
+                    if data.get('result', {}).get('success', False):
+                        successful_checks += 1
+                    else:
+                        failed_checks += 1
+                except:
+                    continue
+            
+            success_rate = (successful_checks / total_checks * 100) if total_checks > 0 else 0
+            
+            metrics[command] = {
+                'total_checks': total_checks,
+                'successful_checks': successful_checks,
+                'failed_checks': failed_checks,
+                'success_rate': round(success_rate, 2)
+            }
+        
+        # Get alert count
+        alert_count = await r.llen('health_alerts')
+        await r.aclose()
+        
+        return {
+            'command_metrics': metrics,
+            'total_alerts': alert_count,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting MCP metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mcp/alerts/test")
+@limiter.limit("5/minute")
+async def test_mcp_alert_channels(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Test all configured MCP alert channels."""
+    try:
+        from .mcp_health_api import mcp_api
+        from monitoring.mcp_alert_manager import MCPAlertManager
+        
+        alert_manager = MCPAlertManager()
+        results = await alert_manager.test_channels()
+        
+        return {
+            'test_results': results,
+            'channels_tested': len(results),
+            'successful_channels': sum(1 for success in results.values() if success),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error testing MCP alert channels: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/mcp/alerts/stats")
+@limiter.limit("30/minute")
+async def get_mcp_alert_stats(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get MCP alert statistics."""
+    try:
+        from monitoring.mcp_alert_manager import MCPAlertManager
+        
+        alert_manager = MCPAlertManager()
+        stats = await alert_manager.get_alert_stats()
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting MCP alert stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mcp/alerts/send")
+@limiter.limit("10/minute")
+async def send_manual_mcp_alert(
+    request: Request,
+    alert_type: str = Query(..., description="Alert type"),
+    message: str = Query(..., description="Alert message"),
+    severity: str = Query("WARNING", regex="^(INFO|WARNING|CRITICAL)$"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Send a manual MCP alert."""
+    try:
+        from monitoring.mcp_alert_manager import send_mcp_alert
+        
+        success = await send_mcp_alert(alert_type, message, severity)
+        
+        return {
+            'success': success,
+            'alert_type': alert_type,
+            'severity': severity,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending manual MCP alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/users/{user_id}/memory", status_code=204)
 async def delete_user_data(user_id: str):
     """
