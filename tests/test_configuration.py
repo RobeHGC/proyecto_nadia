@@ -27,11 +27,11 @@ class TestConfigurationValidation:
     
     VALID_ENV_VARS = {
         "API_ID": "12345678",
-        "API_HASH": "abcdef1234567890abcdef1234567890",
+        "API_HASH": "fake-api-hash-for-testing-only-32chars",
         "PHONE_NUMBER": "+1234567890",
-        "OPENAI_API_KEY": "sk-test1234567890abcdef",
-        "GEMINI_API_KEY": "AIzaTest1234567890",
-        "DATABASE_URL": "postgresql://user:pass@localhost/nadia_hitl_test",
+        "OPENAI_API_KEY": "sk-fake-openai-key-for-testing-only",
+        "GEMINI_API_KEY": "AIza-fake-gemini-key-for-testing-only",
+        "DATABASE_URL": "postgresql://test-user:test-pass@localhost/nadia_hitl_test",
         "REDIS_URL": "redis://localhost:6379/1",
         "LLM_PROFILE": "default"
     }
@@ -42,11 +42,11 @@ class TestConfigurationValidation:
             config = Config.from_env()
             
             assert config.api_id == 12345678
-            assert config.api_hash == "abcdef1234567890abcdef1234567890"
+            assert config.api_hash == "fake-api-hash-for-testing-only-32chars"
             assert config.phone_number == "+1234567890"
-            assert config.openai_api_key == "sk-test1234567890abcdef"
-            assert config.gemini_api_key == "AIzaTest1234567890"
-            assert config.database_url == "postgresql://user:pass@localhost/nadia_hitl_test"
+            assert config.openai_api_key == "sk-fake-openai-key-for-testing-only"
+            assert config.gemini_api_key == "AIza-fake-gemini-key-for-testing-only"
+            assert config.database_url == "postgresql://test-user:test-pass@localhost/nadia_hitl_test"
             assert config.redis_url == "redis://localhost:6379/1"
     
     def test_api_id_validation(self):

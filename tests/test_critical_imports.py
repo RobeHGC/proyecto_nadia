@@ -5,6 +5,13 @@ Issue: https://github.com/RobeHGC/proyecto_nadia/issues/22
 
 This test ensures all core modules can be imported without errors,
 preventing production startup failures.
+
+EXECUTION INSTRUCTIONS:
+Run with proper PYTHONPATH to prevent import issues:
+    PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_critical_imports.py -v
+
+Or run all foundation tests:
+    PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_critical_imports.py tests/test_configuration.py tests/test_database_startup.py -v
 """
 import pytest
 import importlib
