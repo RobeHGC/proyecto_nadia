@@ -423,21 +423,20 @@ class DataAnalytics {
                     }
                 },
                 { 
-                    data: 'cta_response_type',
-                    width: '90px',
-                    render: (data) => {
-                        if (!data) return '--';
-                        const responseConfig = {
-                            'IGNORED': { bg: 'bg-secondary', icon: 'fas fa-eye-slash' },
-                            'POLITE_DECLINE': { bg: 'bg-warning text-dark', icon: 'fas fa-hand-paper' },
-                            'INTERESTED': { bg: 'bg-info', icon: 'fas fa-heart' },
-                            'CONVERTED': { bg: 'bg-success', icon: 'fas fa-dollar-sign' },
-                            'RUDE_DECLINE': { bg: 'bg-danger', icon: 'fas fa-times' }
-                        };
-                        const config = responseConfig[data] || { bg: 'bg-secondary', icon: 'fas fa-question' };
-                        return `<span class="badge ${config.bg}" title="CTA Response: ${data}">
-                            <i class="${config.icon} me-1"></i>${data.replace('_', ' ')}
-                        </span>`;
+                    data: 'reviewer_notes',
+                    width: '200px',
+                    render: (data, type, row) => {
+                        const notes = data || '';
+                        const shortNotes = notes.length > 50 ? notes.substring(0, 50) + '...' : notes;
+                        const isEmpty = !notes.trim();
+                        
+                        return `<div class="reviewer-notes-cell">
+                            <div class="reviewer-notes-display ${isEmpty ? 'empty' : ''}" 
+                                 onclick="analytics.editReviewerNotes('${row.id}', '${notes.replace(/'/g, '&#39;')}')"
+                                 title="${notes || 'Click to add reviewer notes'}">
+                                ${isEmpty ? 'Click to add notes...' : shortNotes}
+                            </div>
+                        </div>`;
                     }
                 },
                 
@@ -472,6 +471,30 @@ class DataAnalytics {
                     }
                 },
                 { 
+                    data: 'created_at',
+                    width: '120px',
+                    render: (data) => {
+                        if (!data) return '--';
+                        const date = new Date(data);
+                        const now = new Date();
+                        const diffMs = now - date;
+                        const diffMins = Math.floor(diffMs / 60000);
+                        const diffHours = Math.floor(diffMs / 3600000);
+                        const diffDays = Math.floor(diffMs / 86400000);
+                        
+                        let timeAgo = '';
+                        if (diffMins < 60) {
+                            timeAgo = `${diffMins}m ago`;
+                        } else if (diffHours < 24) {
+                            timeAgo = `${diffHours}h ago`;
+                        } else {
+                            timeAgo = `${diffDays}d ago`;
+                        }
+                        
+                        return `<span title="${date.toLocaleString()}">${timeAgo}</span>`;
+                    }
+                },
+                { 
                     data: 'id',
                     width: '60px',
                     orderable: false,
@@ -484,7 +507,7 @@ class DataAnalytics {
                     }
                 }
             ],
-            order: [[2, 'desc']], // Sort by created_at desc
+            order: [[14, 'desc']], // Sort by created_at desc (column 14)
             language: {
                 emptyTable: "No data available",
                 info: "Showing _START_ to _END_ of _TOTAL_ entries",
@@ -2048,6 +2071,108 @@ class DataAnalytics {
         toastElement.addEventListener('hidden.bs.toast', () => {
             toastElement.remove();
         });
+    }
+
+    // === REVIEWER NOTES EDITING METHODS ===
+    
+    editReviewerNotes(interactionId, currentNotes) {
+        // Prevent table click event from firing
+        event.stopPropagation();
+        
+        // Find the cell containing this notes display
+        const cell = event.target.closest('.reviewer-notes-cell');
+        if (!cell) return;
+        
+        // Store original content for cancel functionality
+        const originalContent = cell.innerHTML;
+        
+        // Clean up the notes (decode HTML entities)
+        const decodedNotes = currentNotes.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+        
+        // Store original content in a data attribute
+        cell.setAttribute('data-original-content', originalContent);
+        
+        // Create edit interface
+        cell.innerHTML = `
+            <textarea class="reviewer-notes-input" placeholder="Add your review notes...">${decodedNotes}</textarea>
+            <div class="reviewer-notes-actions">
+                <button class="btn-save-notes" onclick="analytics.saveReviewerNotes('${interactionId}', this)">
+                    <i class="fas fa-check me-1"></i>Save
+                </button>
+                <button class="btn-cancel-notes" onclick="analytics.cancelEditReviewerNotes(this)">
+                    <i class="fas fa-times me-1"></i>Cancel
+                </button>
+            </div>
+        `;
+        
+        // Focus on textarea
+        const textarea = cell.querySelector('.reviewer-notes-input');
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        
+        // Handle Enter+Ctrl to save
+        textarea.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                this.saveReviewerNotes(interactionId, textarea.parentNode.querySelector('.btn-save-notes'));
+            } else if (e.key === 'Escape') {
+                this.cancelEditReviewerNotes(textarea.parentNode.querySelector('.btn-cancel-notes'));
+            }
+        });
+    }
+    
+    async saveReviewerNotes(interactionId, buttonElement) {
+        const cell = buttonElement.closest('.reviewer-notes-cell');
+        const textarea = cell.querySelector('.reviewer-notes-input');
+        const newNotes = textarea.value.trim();
+        
+        try {
+            // Show loading state
+            buttonElement.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Saving...';
+            buttonElement.disabled = true;
+            
+            // Make API call to update notes
+            await this.apiCall(`/interactions/${interactionId}/reviewer-notes`, 'POST', {
+                reviewer_notes: newNotes
+            });
+            
+            // Update the display
+            const isEmpty = !newNotes;
+            const shortNotes = newNotes.length > 50 ? newNotes.substring(0, 50) + '...' : newNotes;
+            
+            cell.innerHTML = `
+                <div class="reviewer-notes-display ${isEmpty ? 'empty' : ''}" 
+                     onclick="analytics.editReviewerNotes('${interactionId}', '${newNotes.replace(/'/g, '&#39;')}')"
+                     title="${newNotes || 'Click to add reviewer notes'}">
+                    ${isEmpty ? 'Click to add notes...' : shortNotes}
+                </div>
+            `;
+            
+            // Update the DataTable data
+            if (this.dataTable) {
+                const rowData = this.dataTable.row(cell.closest('tr')).data();
+                rowData.reviewer_notes = newNotes;
+                this.dataTable.row(cell.closest('tr')).data(rowData).draw(false);
+            }
+            
+            this.showToast('Reviewer notes updated successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error updating reviewer notes:', error);
+            this.showToast('Failed to update reviewer notes', 'error');
+            
+            // Reset button state
+            buttonElement.innerHTML = '<i class="fas fa-check me-1"></i>Save';
+            buttonElement.disabled = false;
+        }
+    }
+    
+    cancelEditReviewerNotes(buttonElement) {
+        const cell = buttonElement.closest('.reviewer-notes-cell');
+        // Get the original content from data attribute
+        const originalContent = cell.getAttribute('data-original-content');
+        cell.innerHTML = originalContent;
+        // Remove the data attribute to clean up
+        cell.removeAttribute('data-original-content');
     }
 
     // === INTEGRITY REPORT METHODS ===

@@ -5,28 +5,27 @@ import logging
 from typing import Any, Dict, List
 from datetime import datetime, timedelta
 
-import redis.asyncio as redis
+from utils.config import Config
+from utils.constants import MONTH_IN_SECONDS, RECENT_MESSAGES_COUNT, TEMPORAL_SUMMARY_COUNT
+from utils.datetime_helpers import now_iso, time_ago_text
+from utils.error_handling import handle_errors
+from utils.redis_mixin import RedisConnectionMixin
 
 logger = logging.getLogger(__name__)
 
 
-class UserMemoryManager:
+class UserMemoryManager(RedisConnectionMixin):
     """Gestiona la memoria y contexto de cada usuario."""
 
-    def __init__(self, redis_url: str, max_history_length: int = 50, max_context_size_kb: int = 100):
+    def __init__(self, redis_url: str = None, max_history_length: int = 50, max_context_size_kb: int = 100):
         """Inicializa el gestor con conexión a Redis y límites de memoria."""
-        self.redis_url = redis_url
-        self._redis = None
+        config = Config.from_env() if not redis_url else None
+        super().__init__()
+        self.config = config
         
         # Memory limits configuration
-        self.max_history_length = max_history_length  # Máximo número de mensajes en historial
-        self.max_context_size_kb = max_context_size_kb  # Máximo tamaño del contexto en KB
-
-    async def _get_redis(self):
-        """Obtiene o crea la conexión a Redis."""
-        if not self._redis:
-            self._redis = await redis.from_url(self.redis_url)
-        return self._redis
+        self.max_history_length = max_history_length
+        self.max_context_size_kb = max_context_size_kb
 
     async def close(self):
         """Cierra la conexión a Redis limpiamente."""
@@ -70,7 +69,7 @@ class UserMemoryManager:
             await r.set(
                 f"user:{user_id}",
                 json.dumps(context),
-                ex=86400 * 30  # Expirar en 30 días
+                ex=MONTH_IN_SECONDS  # Expirar en 30 días
             )
 
         except Exception as e:
@@ -372,7 +371,7 @@ class UserMemoryManager:
                         await r.set(
                             f"user:{user_id}",
                             json.dumps(compressed_context),
-                            ex=86400 * 30
+                            ex=MONTH_IN_SECONDS
                         )
                         
                         # Limpiar historial si es necesario
@@ -452,16 +451,9 @@ class UserMemoryManager:
                 
                 # Extraer información del usuario
                 if role == 'user':
-                    # Buscar nombre
-                    if any(phrase in content.lower() for phrase in ['my name is', 'i am', "i'm"]):
-                        for phrase in ['my name is', 'i am', "i'm"]:
-                            if phrase in content.lower():
-                                parts = content.lower().split(phrase)
-                                if len(parts) > 1:
-                                    potential_name = parts[1].strip().split()[0]
-                                    if potential_name and not user_info.get('name'):
-                                        user_info['name'] = potential_name.capitalize()
-                                        summary_points.append(f"{time_label}: User introduced themselves as {user_info['name']}")
+                    # DISABLED: Automatic name extraction - names should only come from user_current_status table
+                    # This was causing incorrect names like "Never", "A", "Winter" to be extracted
+                    pass
                     
                     # Detectar temas importantes
                     if any(word in content.lower() for word in ['work', 'job', 'profession', 'occupation']):
@@ -498,11 +490,10 @@ class UserMemoryManager:
             
             # Formatear resumen final
             if summary_points:
-                summary = "=== CONVERSATION CONTEXT ===\n"
-                summary += "\n".join(f"- {point}" for point in summary_points[:8])  # Máximo 8 puntos
+                summary = "\n".join(f"- {point}" for point in summary_points[:5])  # Máximo 5 puntos más enfocados
                 return summary
             else:
-                return "=== CONVERSATION CONTEXT ===\n- New conversation, no previous context"
+                return "- First conversation with this user"
             
         except Exception as e:
             logger.error(f"Error generating temporal summary: {e}")

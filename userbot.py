@@ -3,31 +3,35 @@
 import asyncio
 import contextlib
 import json
-import logging
 from datetime import datetime
 
-import redis.asyncio as redis
 from telethon import TelegramClient, events
 
-from agents.supervisor_agent import ReviewItem, SupervisorAgent
+from agents.supervisor_agent import SupervisorAgent
+from agents.types import ReviewItem
 from cognition.cognitive_controller import CognitiveController
-from cognition.constitution import Constitution  # NUEVO: Import Constitution
-from database.models import DatabaseManager  # NUEVO: Import DatabaseManager
+from cognition.constitution import Constitution
+from database.models import DatabaseManager
 from llms.openai_client import OpenAIClient
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
+from utils.constants import TYPING_DEBOUNCE_DELAY
+from utils.datetime_helpers import now_iso
 from utils.entity_resolver import EntityResolver
+from utils.error_handling import handle_errors
+from utils.logging_config import get_logger
+from utils.redis_mixin import RedisConnectionMixin
 from utils.typing_simulator import TypingSimulator
 from utils.user_activity_tracker import UserActivityTracker
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
-class UserBot:
+class UserBot(RedisConnectionMixin):
     """Main Telegram client that handles message events."""
 
     def __init__(self, config: Config):
+        super().__init__()
         self.config = config
 
         # Telegram
@@ -38,12 +42,11 @@ class UserBot:
         self.llm = OpenAIClient(config.openai_api_key, config.openai_model)
         self.supervisor = SupervisorAgent(self.llm, self.memory, config)
         self.cognitive_controller = CognitiveController()
-        self.constitution = Constitution()  # NUEVO: Initialize Constitution
-        self.db_manager = DatabaseManager(config.database_url)  # NUEVO: Initialize DatabaseManager
-
-        # Redis / WAL
-        self.redis_url = config.redis_url
-        self._redis: redis.Redis | None = None
+        self.constitution = Constitution()
+        self.db_manager = DatabaseManager(config.database_url)
+        
+        # Configure db_manager in supervisor for nickname access
+        self.supervisor.set_db_manager(self.db_manager)
         self.message_queue_key = "nadia_message_queue"
         self.processing_key = "nadia_processing"
 
@@ -60,14 +63,13 @@ class UserBot:
         
         # Adaptive Window Message Pacing
         self.activity_tracker = None  # Will be initialized after client start
+        
+        # Protocol de Silencio
+        self.protocol_manager = None  # Will be initialized after database
 
     # ────────────────────────────────
     # Redis Helpers
     # ────────────────────────────────
-    async def _get_redis(self) -> redis.Redis:
-        if not self._redis:
-            self._redis = await redis.from_url(self.redis_url)
-        return self._redis
 
     # ────────────────────────────────
     # Main Flow
@@ -84,7 +86,46 @@ class UserBot:
         
         self.typing_simulator = TypingSimulator(self.client)  # Initialize typing simulator
         self.typing_simulator.set_entity_resolver(self.entity_resolver)  # Connect entity resolver
-        self.activity_tracker = UserActivityTracker(self.redis_url, self.config)  # Initialize activity tracker
+        self.activity_tracker = UserActivityTracker(self.config.redis_url, self.config)  # Initialize activity tracker
+        
+        # Initialize Protocol Manager
+        try:
+            from utils.protocol_manager import ProtocolManager
+            self.protocol_manager = ProtocolManager(self.db_manager)
+            await self.protocol_manager.initialize()
+            logger.info("Protocol Manager initialized successfully")
+        except Exception as e:
+            logger.warning(f"Protocol Manager initialization failed: {e}")
+            self.protocol_manager = None
+        
+        # Initialize Recovery Agent
+        try:
+            from agents.recovery_agent import RecoveryAgent
+            from utils.telegram_history import TelegramHistoryManager
+            from utils.recovery_config import get_recovery_config
+            
+            recovery_config = get_recovery_config()
+            if recovery_config.enabled:
+                telegram_history = TelegramHistoryManager(self.client)
+                self.recovery_agent = RecoveryAgent(
+                    database_manager=self.db_manager,
+                    telegram_history=telegram_history,
+                    supervisor_agent=self.supervisor,
+                    config=recovery_config
+                )
+                logger.info("Recovery Agent initialized successfully")
+                
+                # Perform startup recovery check if enabled
+                if recovery_config.startup_check_enabled:
+                    logger.info("🔄 Starting startup recovery check...")
+                    asyncio.create_task(self._run_startup_recovery())
+            else:
+                logger.info("Recovery Agent disabled by configuration")
+                self.recovery_agent = None
+        except Exception as e:
+            logger.warning(f"Recovery Agent initialization failed: {e}")
+            self.recovery_agent = None
+        
         logger.info("Bot started successfully")
         
         if self.config.enable_typing_pacing:
@@ -92,8 +133,8 @@ class UserBot:
         else:
             logger.info("Adaptive Window Message Pacing disabled - using original processing")
 
-        wal_worker = asyncio.create_task(self._process_wal_queue())
-        approved_worker = asyncio.create_task(self._process_approved_messages())
+        self.wal_task = asyncio.create_task(self._process_wal_queue())
+        self.approved_task = asyncio.create_task(self._process_approved_messages())
 
         @self.client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
         async def _(event):  # noqa: D401,  WPS122
@@ -108,11 +149,11 @@ class UserBot:
         try:
             await self.client.run_until_disconnected()
         finally:
-            wal_worker.cancel()
-            approved_worker.cancel()
+            self.wal_task.cancel()
+            self.approved_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await wal_worker
-                await approved_worker
+                await self.wal_task
+                await self.approved_task
             await self.memory.close()
             await self.db_manager.close()  # NUEVO: Close database
             if self.activity_tracker:
@@ -123,11 +164,18 @@ class UserBot:
     # ────────────────────────────────
     async def _handle_incoming_message(self, event):
         """Handle incoming message with adaptive window logic or fallback to original."""
-        # Pre-resolve entity in background for typing simulation
-        if self.entity_resolver:
-            asyncio.create_task(
-                self.entity_resolver.preload_entity_for_message(event.sender_id)
-            )
+        # Cache entity from event immediately (when it's available)
+        if self.entity_resolver and hasattr(event, 'sender'):
+            try:
+                # Cache the entity directly from the event
+                self.entity_resolver.entity_cache[event.sender_id] = event.sender
+                logger.debug(f"Cached entity for user {event.sender_id} from event")
+            except Exception as e:
+                logger.warning(f"Failed to cache entity from event for {event.sender_id}: {e}")
+                # Fallback to background preloading
+                asyncio.create_task(
+                    self.entity_resolver.preload_entity_for_message(event.sender_id)
+                )
         
         if self.config.enable_typing_pacing and self.activity_tracker:
             # Try adaptive window processing
@@ -159,7 +207,9 @@ class UserBot:
                     "message": event.text,
                     "chat_id": event.chat_id,
                     "message_id": event.message.id,
-                    "timestamp": datetime.now().isoformat(),
+                    "telegram_message_id": event.message.id,  # For recovery tracking
+                    "telegram_date": event.message.date.isoformat(),  # For recovery tracking
+                    "timestamp": now_iso(),
                 }
                 logger.info("Message enqueued in WAL from user %s", message_data["user_id"])
             
@@ -249,7 +299,7 @@ class UserBot:
                         await self.memory.add_to_conversation_history(user_id, {
                             "role": "assistant",
                             "content": combined_response,
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": now_iso(),
                             "bubbles": bubbles  # Keep original bubbles for reference
                         })
                         logger.info(f"Bot response saved to conversation history for user {user_id}")
@@ -279,7 +329,7 @@ class UserBot:
                                     await self.memory.add_to_conversation_history(user_id, {
                                         "role": "assistant",
                                         "content": " ".join(bubbles),
-                                        "timestamp": datetime.now().isoformat()
+                                        "timestamp": now_iso()
                                     })
                                 else:
                                     logger.error("Review %s not found in database", review_id)
@@ -302,8 +352,33 @@ class UserBot:
     # Message Processing - HITL Mode
     # ────────────────────────────────
     async def _process_message(self, msg: dict):
-        """Processes a message from the WAL - HITL version."""
+        """Processes a message from the WAL - HITL version with Protocol de Silencio support."""
         try:
+            user_id = msg["user_id"]
+            
+            # 🚨 PROTOCOL DE SILENCIO CHECK
+            # Check if user has active silence protocol BEFORE processing
+            if hasattr(self, 'protocol_manager') and self.protocol_manager:
+                is_silenced = await self.protocol_manager.is_protocol_active(user_id)
+                if is_silenced:
+                    # Queue message for quarantine instead of processing
+                    await self._queue_for_quarantine(msg)
+                    logger.info(f"Message from user {user_id} quarantined due to active silence protocol")
+                    return
+            else:
+                # Fallback: Check protocol status directly from database
+                try:
+                    protocol_status = await self.db_manager.get_protocol_status(user_id)
+                    if protocol_status.get('status') == 'ACTIVE':
+                        # Queue message for quarantine
+                        await self._queue_for_quarantine(msg)
+                        logger.info(f"Message from user {user_id} quarantined due to active silence protocol (fallback check)")
+                        return
+                except Exception as e:
+                    logger.error(f"Error checking protocol status for {user_id}: {e}")
+                    # Continue with normal processing if protocol check fails
+            
+            # Normal message processing (no protocol active)
             route = self.cognitive_controller.route_message(msg["message"])
 
             if route == "fast_path":
@@ -327,8 +402,10 @@ class UserBot:
                     msg["user_id"], msg["message"]
                 )
 
-                # Add chat_id to the review item for sending later
+                # Add chat_id and recovery tracking data to the review item
                 review_item.conversation_context["chat_id"] = msg["chat_id"]
+                review_item.conversation_context["telegram_message_id"] = msg.get("telegram_message_id")
+                review_item.conversation_context["telegram_date"] = msg.get("telegram_date")
 
                 # Queue the review item
                 await self._queue_for_review(review_item)
@@ -338,6 +415,60 @@ class UserBot:
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing WAL message: %s", exc)
             # No enviar mensajes enlatados - prohibido para mantener naturalidad
+
+    async def _queue_for_quarantine(self, msg: dict):
+        """Queue message for quarantine due to active silence protocol."""
+        try:
+            import uuid
+            from utils.datetime_helpers import now_iso
+            
+            user_id = msg["user_id"]
+            message_text = msg["message"]
+            telegram_message_id = msg.get("telegram_message_id")
+            
+            # Generate unique message ID
+            message_id = str(uuid.uuid4())
+            
+            # Get conversation context for preview
+            context_preview = []
+            try:
+                # Get last few messages for context
+                history = await self.memory.get_conversation_with_summary(user_id, recent_count=3)
+                recent_messages = history.get('recent_messages', [])
+                context_preview = [
+                    {
+                        "role": msg.get("role", "user"),
+                        "content": msg.get("content", "")[:100],  # Truncate for preview
+                        "timestamp": msg.get("timestamp", "")
+                    }
+                    for msg in recent_messages[-3:]  # Last 3 messages
+                ]
+            except Exception as e:
+                logger.warning(f"Could not get context preview for {user_id}: {e}")
+            
+            # Save to database
+            if hasattr(self, 'protocol_manager') and self.protocol_manager:
+                await self.protocol_manager.queue_for_quarantine(
+                    user_id=user_id,
+                    message_id=message_id,
+                    message_text=message_text,
+                    telegram_message_id=telegram_message_id,
+                    context_preview=context_preview
+                )
+            else:
+                # Fallback: Save directly to database
+                await self.db_manager.save_quarantine_message(
+                    user_id=user_id,
+                    message_id=message_id,
+                    message_text=message_text,
+                    telegram_message_id=telegram_message_id
+                )
+            
+            logger.info(f"Message {message_id} from user {user_id} queued for quarantine")
+            
+        except Exception as e:
+            logger.error(f"Error queueing message for quarantine: {e}")
+            # Continue without quarantining - don't block normal processing
 
     # ────────────────────────────────
     # HITL Review Queue Management
@@ -443,7 +574,7 @@ class UserBot:
                 "user_id": user_id,
                 "user_message": user_message[:200],  # Truncate for privacy
                 "blocked_response": blocked_response[:200],
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now_iso()
             }
 
             # Store in Redis with expiration for privacy
@@ -530,6 +661,54 @@ class UserBot:
         except Exception as exc:  # pragma: no cover
             logger.error("Error processing direct message: %s", exc)
             # No enviar mensajes enlatados - prohibido para mantener naturalidad
+
+    # ────────────────────────────────
+    # Recovery Agent Methods
+    # ────────────────────────────────
+    async def _run_startup_recovery(self):
+        """Run startup recovery check in background."""
+        try:
+            if not self.recovery_agent:
+                logger.warning("Recovery agent not initialized, skipping startup recovery")
+                return
+            
+            logger.info("🔄 Starting background recovery check...")
+            stats = await self.recovery_agent.startup_recovery_check()
+            
+            if stats["messages_recovered"] > 0:
+                logger.info(f"✅ Startup recovery completed: {stats['messages_recovered']} messages recovered, "
+                           f"{stats['messages_skipped']} skipped, {stats['errors']} errors")
+            else:
+                logger.info("✅ Startup recovery completed: No messages to recover")
+                
+        except Exception as e:
+            logger.error(f"❌ Startup recovery failed: {e}")
+
+    async def trigger_manual_recovery(self, user_id: str = None) -> dict:
+        """Trigger manual recovery for testing/admin purposes."""
+        try:
+            if not self.recovery_agent:
+                return {"error": "Recovery agent not initialized"}
+            
+            logger.info(f"🔄 Manual recovery triggered for user: {user_id or 'ALL'}")
+            result = await self.recovery_agent.manual_recovery_trigger(user_id)
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Manual recovery failed: {e}")
+            return {"error": str(e)}
+
+    async def get_recovery_status(self) -> dict:
+        """Get current recovery system status."""
+        try:
+            if not self.recovery_agent:
+                return {"enabled": False, "status": "not_initialized"}
+            
+            return await self.recovery_agent.get_recovery_status()
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting recovery status: {e}")
+            return {"enabled": False, "status": "error", "error": str(e)}
 
 
 # ────────────────────────────────

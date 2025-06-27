@@ -485,6 +485,72 @@
         #data-table tbody tr:hover {
             background-color: rgba(99, 102, 241, 0.05) !important;
         }
+
+        /* Reviewer Notes Editable Styles */
+        .reviewer-notes-cell {
+            position: relative;
+            max-width: 200px;
+        }
+
+        .reviewer-notes-display {
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            min-height: 20px;
+            word-break: break-word;
+        }
+
+        .reviewer-notes-display:hover {
+            background-color: rgba(99, 102, 241, 0.1);
+        }
+
+        .reviewer-notes-display.empty {
+            color: #9e9e9e;
+            font-style: italic;
+        }
+
+        .reviewer-notes-input {
+            width: 100%;
+            min-height: 60px;
+            padding: 8px;
+            border: 2px solid var(--primary-color);
+            border-radius: 4px;
+            font-size: 0.875rem;
+            resize: vertical;
+            background: white;
+        }
+
+        .reviewer-notes-input:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .reviewer-notes-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-save-notes {
+            background: var(--success-color);
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        .btn-cancel-notes {
+            background: var(--text-secondary);
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -777,11 +843,12 @@
                                     <th>Risk Score</th>
                                     <th>Constitution</th>
                                     <th>CTA Status</th>
-                                    <th>CTA Response</th>
+                                    <th>Reviewer Notes</th>
                                     
                                     <!-- GRUPO 4: Performance -->
                                     <th>Review Time</th>
                                     <th>Cost</th>
+                                    <th>Created</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>

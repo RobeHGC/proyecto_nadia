@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import pytest
-import redis
+import redis.asyncio as redis
 import uuid
 from decimal import Decimal
 from typing import Dict, Any
@@ -37,12 +37,13 @@ async def config():
 async def redis_client():
     """Redis client for testing."""
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/1')  # Use DB 1 for tests
-    client = redis.from_url(redis_url, decode_responses=True)
+    client = await redis.from_url(redis_url, decode_responses=True)
     yield client
     # Cleanup test data
     for user_id in TEST_USER_IDS:
-        client.delete(f"gemini_quota:{user_id}")
-        client.delete(f"user_memory:{user_id}")
+        await client.delete(f"gemini_quota:{user_id}")
+        await client.delete(f"user_memory:{user_id}")
+    await client.close()
 
 @pytest.fixture
 async def db_manager():

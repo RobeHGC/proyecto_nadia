@@ -3,8 +3,8 @@
 import json
 import logging
 import os
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
 
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, Response
@@ -91,6 +91,17 @@ class ReviewRejectionRequest(BaseModel):
         return v
 
 
+class RecoveryTriggerRequest(BaseModel):
+    user_id: Optional[str] = Field(None, description="Specific user ID to recover, or None for all users")
+    max_messages: Optional[int] = Field(None, ge=1, le=500, description="Maximum messages to recover per user")
+
+
+class CursorUpdateRequest(BaseModel):
+    telegram_message_id: int = Field(..., ge=1, description="Last processed Telegram message ID")
+    telegram_date: str = Field(..., description="Last processed message date (ISO format)")
+    messages_recovered: int = Field(0, ge=0, description="Number of messages recovered in this update")
+
+
 # New model management request models
 class ProfileSwitchRequest(BaseModel):
     profile_name: str = Field(..., min_length=1, max_length=50)
@@ -109,6 +120,20 @@ class CustomerStatusUpdateRequest(BaseModel):
     customer_status: str = Field(..., pattern='^(PROSPECT|LEAD_QUALIFIED|CUSTOMER|CHURNED|LEAD_EXHAUSTED)$')
     reason: str = Field("Manual update from dashboard", max_length=200)
     ltv_amount: float = Field(0.0, ge=0.0, le=10000.0)  # Max $10k LTV
+
+class NicknameUpdateRequest(BaseModel):
+    nickname: str = Field(..., max_length=50, min_length=1)
+    reason: str = Field("Manual update from dashboard", max_length=200)
+
+
+class ReviewerNotesUpdateRequest(BaseModel):
+    reviewer_notes: str = Field(..., max_length=1000)
+    
+    @field_validator('reviewer_notes')
+    @classmethod
+    def validate_reviewer_notes(cls, v):
+        import html
+        return html.escape(v.strip()) if v else ""
 
 
 class ReviewResponse(BaseModel):
@@ -264,7 +289,11 @@ async def root():
             "approve_review": "POST /reviews/{review_id}/approve",
             "reject_review": "POST /reviews/{review_id}/reject",
             "dashboard_metrics": "GET /metrics/dashboard",
-            "edit_taxonomy": "GET /edit-taxonomy"
+            "edit_taxonomy": "GET /edit-taxonomy",
+            "recovery_status": "GET /recovery/status",
+            "recovery_trigger": "POST /recovery/trigger",
+            "recovery_history": "GET /recovery/history",
+            "recovery_cursor": "GET/POST /recovery/cursor/{user_id}"
         }
     }
 
@@ -421,7 +450,7 @@ async def get_pending_reviews(
                     llm1_cost_usd=review.get("llm1_cost_usd"),
                     llm2_cost_usd=review.get("llm2_cost_usd"),
                     # Customer status
-                    customer_status=review.get("customer_status", "PROSPECT")
+                    customer_status=review.get("current_customer_status", "PROSPECT")
                 )
                 for review in reviews
             ]
@@ -1254,69 +1283,35 @@ async def update_customer_status(
         if database_mode == "skip":
             return {"status": "success", "message": "Database mode is skip, status not updated"}
         
-        # Get the latest interaction for this user to update
+        # Simple update to single source of truth
         async with db_manager._pool.acquire() as conn:
-            # Get the most recent interaction for this user
-            latest_interaction = await conn.fetchrow(
-                """
-                SELECT id, customer_status
-                FROM interactions 
-                WHERE user_id = $1 
-                ORDER BY created_at DESC 
-                LIMIT 1
-                """,
-                user_id
-            )
-            
-            if not latest_interaction:
-                raise HTTPException(status_code=404, detail="No interactions found for this user")
-            
-            interaction_id = latest_interaction['id']
-            current_status = latest_interaction['customer_status']
-            
-            # Simple direct update without using the complex function
-            # The function is designed for automated CTA responses, not manual updates
-            new_status = status_request.customer_status
-            
-            # Also update all interactions for this user to maintain consistency
+            # Update or insert into user_current_status table
             await conn.execute(
                 """
-                UPDATE interactions 
-                SET customer_status = $1::VARCHAR(20),
+                INSERT INTO user_current_status (user_id, customer_status, ltv_usd, updated_at)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    customer_status = EXCLUDED.customer_status,
                     ltv_usd = CASE 
-                        WHEN $1::VARCHAR(20) = 'CUSTOMER' THEN COALESCE(ltv_usd, 0) + $2::DECIMAL
-                        ELSE ltv_usd 
-                    END
-                WHERE user_id = $3::TEXT
-                """,
-                status_request.customer_status,
-                status_request.ltv_amount,
-                user_id
-            )
-            
-            # Log the manual status change
-            await conn.execute(
-                """
-                INSERT INTO customer_status_transitions (
-                    user_id, interaction_id, previous_status, new_status, reason, automated
-                ) VALUES ($1, $2, $3, $4, $5, FALSE)
+                        WHEN EXCLUDED.customer_status = 'CUSTOMER' 
+                        THEN user_current_status.ltv_usd + EXCLUDED.ltv_usd
+                        ELSE user_current_status.ltv_usd
+                    END,
+                    updated_at = NOW()
                 """,
                 user_id,
-                interaction_id,
-                current_status,
                 status_request.customer_status,
-                status_request.reason
+                status_request.ltv_amount
             )
         
-        logger.info(f"Customer status updated for user {user_id}: {current_status} → {status_request.customer_status}")
+        logger.info(f"Customer status updated for user {user_id} to {status_request.customer_status}")
         
         return {
             "status": "success",
             "user_id": user_id,
-            "previous_status": current_status,
             "new_status": status_request.customer_status,
-            "ltv_added": status_request.ltv_amount,
-            "reason": status_request.reason
+            "ltv_added": status_request.ltv_amount
         }
         
     except HTTPException:
@@ -1324,6 +1319,97 @@ async def update_customer_status(
     except Exception as e:
         logger.error(f"Error updating customer status for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update customer status")
+
+
+@app.post("/users/{user_id}/nickname")
+@limiter.limit("10/minute")
+async def update_nickname(
+    request: Request,
+    user_id: str,
+    nickname_request: NicknameUpdateRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Update nickname for a specific user"""
+    
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, nickname not updated"}
+        
+        # Update or insert nickname in user_current_status table
+        async with db_manager._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_current_status (user_id, nickname, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    nickname = EXCLUDED.nickname,
+                    updated_at = NOW()
+                """,
+                user_id,
+                nickname_request.nickname
+            )
+        
+        logger.info(f"Nickname updated for user {user_id} to '{nickname_request.nickname}'")
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "new_nickname": nickname_request.nickname
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating nickname for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update nickname")
+
+
+@app.post("/interactions/{interaction_id}/reviewer-notes")
+@limiter.limit("10/minute")
+async def update_reviewer_notes(
+    request: Request,
+    interaction_id: str,
+    notes_request: ReviewerNotesUpdateRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Update reviewer notes for a specific interaction"""
+    
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, notes not updated"}
+        
+        # Update reviewer notes in interactions table
+        async with db_manager._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE interactions 
+                SET reviewer_notes = $1, updated_at = NOW()
+                WHERE id = $2::UUID
+                """,
+                notes_request.reviewer_notes,
+                interaction_id
+            )
+            
+            # Check if any row was updated
+            if result == "UPDATE 0":
+                raise HTTPException(status_code=404, detail="Interaction not found")
+        
+        logger.info(f"Reviewer notes updated for interaction {interaction_id}")
+        
+        return {
+            "status": "success",
+            "interaction_id": interaction_id,
+            "reviewer_notes": notes_request.reviewer_notes
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating reviewer notes for interaction {interaction_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update reviewer notes")
 
 
 @app.get("/users/{user_id}/customer-status")
@@ -1341,59 +1427,34 @@ async def get_customer_status(
             return {"customer_status": "PROSPECT", "ltv_usd": 0.0, "message": "Database mode is skip"}
         
         async with db_manager._pool.acquire() as conn:
+            # Simple query from single source of truth
             user_status = await conn.fetchrow(
                 """
                 SELECT 
                     customer_status,
                     ltv_usd,
-                    cta_sent_count,
-                    last_cta_sent_at,
-                    conversion_date,
-                    created_at as last_interaction
-                FROM interactions
+                    nickname,
+                    updated_at
+                FROM user_current_status
                 WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT 1
                 """,
                 user_id
             )
             
             if not user_status:
+                # User not in status table yet - default to PROSPECT
                 return {
                     "customer_status": "PROSPECT",
                     "ltv_usd": 0.0,
-                    "cta_sent_count": 0,
-                    "message": "No interactions found for this user"
+                    "nickname": None,
+                    "updated_at": None
                 }
-            
-            # Get status transition history
-            transitions = await conn.fetch(
-                """
-                SELECT previous_status, new_status, reason, automated, created_at
-                FROM customer_status_transitions
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT 5
-                """,
-                user_id
-            )
             
             return {
                 "customer_status": user_status['customer_status'],
                 "ltv_usd": float(user_status['ltv_usd'] or 0),
-                "cta_sent_count": user_status['cta_sent_count'] or 0,
-                "last_cta_sent_at": user_status['last_cta_sent_at'].isoformat() if user_status['last_cta_sent_at'] else None,
-                "conversion_date": user_status['conversion_date'].isoformat() if user_status['conversion_date'] else None,
-                "last_interaction": user_status['last_interaction'].isoformat() if user_status['last_interaction'] else None,
-                "status_history": [
-                    {
-                        "previous_status": t['previous_status'],
-                        "new_status": t['new_status'],
-                        "reason": t['reason'],
-                        "automated": t['automated'],
-                        "date": t['created_at'].isoformat()
-                    } for t in transitions
-                ]
+                "nickname": user_status['nickname'],
+                "updated_at": user_status['updated_at'].isoformat() if user_status['updated_at'] else None
             }
         
     except Exception as e:
@@ -1550,6 +1611,896 @@ async def get_data_integrity_report(
     - List of data transformations applied
     """
     return await analytics_manager.get_data_integrity_report()
+
+
+# =================== PROTOCOL DE SILENCIO ENDPOINTS ===================
+
+@app.post("/users/{user_id}/protocol")
+@limiter.limit("10/minute")
+async def manage_protocol(
+    request: Request,
+    user_id: str,
+    action: str = Query(..., regex="^(activate|deactivate)$", description="Action to perform"),
+    reason: Optional[str] = Query(None, max_length=200, description="Reason for action"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Activate or deactivate silence protocol for a user."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip, protocol not updated"}
+        
+        # Get ProtocolManager instance (this would need to be initialized somewhere)
+        # For now, we'll interact directly with the database
+        
+        activated_by = "dashboard_user"  # TODO: Get from authentication context
+        
+        if action == "activate":
+            success = await db_manager.activate_protocol(user_id, activated_by, reason)
+            message = f"Protocol activated for user {user_id}"
+        else:  # deactivate
+            success = await db_manager.deactivate_protocol(user_id, activated_by, reason)
+            message = f"Protocol deactivated for user {user_id}"
+        
+        if success:
+            logger.info(f"Protocol {action} successful for user {user_id}")
+            return {
+                "status": "success",
+                "action": action,
+                "user_id": user_id,
+                "message": message
+            }
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to {action} protocol")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error managing protocol for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to {action} protocol")
+
+
+@app.get("/quarantine/messages")
+@limiter.limit("30/minute")
+async def get_quarantine_messages(
+    request: Request,
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of messages"),
+    include_processed: bool = Query(False, description="Include already processed messages"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get messages in quarantine queue."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"messages": [], "message": "Database mode is skip"}
+        
+        messages = await db_manager.get_quarantine_messages(
+            user_id=user_id,
+            limit=limit,
+            include_processed=include_processed
+        )
+        
+        return {
+            "messages": messages,
+            "total": len(messages),
+            "filters": {
+                "user_id": user_id,
+                "include_processed": include_processed
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting quarantine messages: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve quarantine messages")
+
+
+@app.post("/quarantine/{message_id}/process")
+@limiter.limit("20/minute")
+async def process_quarantine_message(
+    request: Request,
+    message_id: str,
+    action: str = Query(..., regex="^(process|process_and_deactivate)$", description="Action to perform"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Process a single quarantine message."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip"}
+        
+        processed_by = "dashboard_user"  # TODO: Get from authentication context
+        
+        # Mark message as processed
+        message_data = await db_manager.process_quarantine_message(message_id, processed_by)
+        
+        if not message_data:
+            raise HTTPException(status_code=404, detail="Message not found or already processed")
+        
+        # If action is process_and_deactivate, also deactivate protocol
+        if action == "process_and_deactivate":
+            user_id = message_data['user_id']
+            await db_manager.deactivate_protocol(
+                user_id, 
+                processed_by, 
+                "Deactivated after processing quarantine message"
+            )
+            
+            return {
+                "status": "success",
+                "message": "Message processed and protocol deactivated",
+                "message_id": message_id,
+                "user_id": user_id,
+                "protocol_deactivated": True
+            }
+        
+        return {
+            "status": "success",
+            "message": "Message processed successfully",
+            "message_id": message_id,
+            "user_id": message_data['user_id'],
+            "protocol_deactivated": False
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing quarantine message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process quarantine message")
+
+
+@app.post("/quarantine/batch-process")
+@limiter.limit("5/minute")
+async def batch_process_quarantine(
+    request: Request,
+    message_ids: List[str],
+    action: str = Query(..., regex="^(process|delete)$", description="Batch action to perform"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Process multiple quarantine messages in batch."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip"}
+        
+        if len(message_ids) > 100:
+            raise HTTPException(status_code=400, detail="Maximum 100 messages per batch")
+        
+        processed_by = "dashboard_user"  # TODO: Get from authentication context
+        results = {"processed": 0, "failed": 0, "errors": []}
+        
+        for message_id in message_ids:
+            try:
+                if action == "process":
+                    result = await db_manager.process_quarantine_message(message_id, processed_by)
+                    if result:
+                        results["processed"] += 1
+                    else:
+                        results["failed"] += 1
+                        results["errors"].append(f"Message {message_id} not found")
+                else:  # delete
+                    success = await db_manager.delete_quarantine_message(message_id)
+                    if success:
+                        results["processed"] += 1
+                    else:
+                        results["failed"] += 1
+                        results["errors"].append(f"Message {message_id} not found")
+                        
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append(f"Message {message_id}: {str(e)}")
+        
+        return {
+            "status": "completed",
+            "action": action,
+            "results": results
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch processing: {e}")
+        raise HTTPException(status_code=500, detail="Batch processing failed")
+
+
+@app.delete("/quarantine/{message_id}")
+@limiter.limit("30/minute")
+async def delete_quarantine_message(
+    request: Request,
+    message_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Delete a quarantine message."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "success", "message": "Database mode is skip"}
+        
+        success = await db_manager.delete_quarantine_message(message_id)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Message deleted successfully",
+                "message_id": message_id
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Message not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting quarantine message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete quarantine message")
+
+
+@app.get("/quarantine/stats")
+@limiter.limit("60/minute")
+async def get_quarantine_stats(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get protocol statistics and metrics."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {
+                "active_protocols": 0,
+                "total_cost_saved_usd": 0.0,
+                "messages_last_24h": 0,
+                "message": "Database mode is skip"
+            }
+        
+        stats = await db_manager.get_protocol_stats()
+        
+        # Auto-cleanup expired messages (older than 7 days)
+        try:
+            await db_manager.cleanup_expired_quarantine_messages()
+        except Exception as e:
+            logger.warning(f"Failed to cleanup expired messages: {e}")
+        
+        return {
+            "active_protocols": stats["active_protocols"],
+            "total_messages_quarantined": stats["total_messages_quarantined"],
+            "total_cost_saved_usd": stats["total_cost_saved_usd"],
+            "avg_messages_per_user": stats["avg_messages_per_user"],
+            "messages_last_24h": stats["messages_last_24h"],
+            "estimated_monthly_savings": stats["total_cost_saved_usd"] * 30,  # Rough estimate
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting quarantine stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve quarantine statistics")
+
+
+@app.get("/quarantine/audit-log")
+@limiter.limit("30/minute")
+async def get_protocol_audit_log(
+    request: Request,
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of entries"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get protocol audit log entries."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"audit_log": [], "message": "Database mode is skip"}
+        
+        audit_entries = await db_manager.get_protocol_audit_log(user_id=user_id, limit=limit)
+        
+        return {
+            "audit_log": audit_entries,
+            "total": len(audit_entries),
+            "filters": {
+                "user_id": user_id,
+                "limit": limit
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting protocol audit log: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve audit log")
+
+
+@app.get("/users/{user_id}/protocol-stats")
+@limiter.limit("60/minute")
+async def get_user_protocol_stats(
+    request: Request,
+    user_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get detailed protocol statistics for a specific user."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"message": "Database mode is skip"}
+        
+        stats = await db_manager.get_protocol_user_stats(user_id)
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting user protocol stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve user protocol statistics")
+
+
+@app.post("/quarantine/cleanup")
+@limiter.limit("5/minute")
+async def cleanup_expired_messages(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Manually trigger cleanup of expired quarantine messages."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"deleted_count": 0, "message": "Database mode is skip"}
+        
+        deleted_count = await db_manager.cleanup_expired_quarantine_messages()
+        
+        return {
+            "status": "success",
+            "deleted_count": deleted_count,
+            "message": f"Cleaned up {deleted_count} expired messages"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up expired messages: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cleanup expired messages")
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# RECOVERY AGENT API ENDPOINTS
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/recovery/status")
+@limiter.limit("30/minute")
+async def get_recovery_status(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get current recovery system status."""
+    try:
+        # Import recovery modules (lazy loading to avoid circular imports)
+        from agents.recovery_agent import RecoveryAgent
+        from utils.telegram_history import TelegramHistoryManager
+        from utils.recovery_config import get_recovery_config
+        
+        recovery_config = get_recovery_config()
+        
+        if not recovery_config.enabled:
+            return {
+                "enabled": False,
+                "status": "disabled",
+                "message": "Recovery system is disabled in configuration"
+            }
+        
+        # Get recovery stats from database
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {
+                "enabled": recovery_config.enabled,
+                "status": "database_skip_mode",
+                "config": recovery_config.to_dict()
+            }
+        
+        stats = await db_manager.get_recovery_stats()
+        operations = await db_manager.get_recovery_operations(limit=5)
+        cursors = await db_manager.get_all_user_cursors()
+        
+        cursor_summary = {
+            "total_users": len(cursors),
+            "users_with_recent_recovery": sum(1 for c in cursors 
+                                            if (datetime.now(timezone.utc) - c["last_recovery_check"]).days < 1),
+            "oldest_recovery_check": min(c["last_recovery_check"] for c in cursors) if cursors else None
+        }
+        
+        return {
+            "enabled": True,
+            "status": "healthy",
+            "config": recovery_config.to_dict(),
+            "stats": stats,
+            "recent_operations": operations,
+            "cursor_summary": cursor_summary,
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting recovery status: {e}")
+        return {
+            "enabled": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.get("/recovery/messages")
+@limiter.limit("30/minute")
+async def get_recovered_messages(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of messages"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get list of recovered messages."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"messages": [], "message": "Database mode is skip"}
+        
+        messages = await db_manager.get_recovered_messages(limit=limit, user_id=user_id)
+        
+        return {
+            "messages": messages,
+            "total": len(messages),
+            "filters": {
+                "user_id": user_id,
+                "limit": limit
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting recovered messages: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve recovered messages")
+
+
+@app.post("/recovery/trigger")
+@limiter.limit("5/minute")
+async def trigger_recovery(
+    request: Request,
+    trigger_request: RecoveryTriggerRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Manually trigger recovery operation."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "skipped", "message": "Database mode is skip"}
+        
+        # Import recovery modules
+        from agents.recovery_agent import RecoveryAgent
+        from utils.telegram_history import TelegramHistoryManager
+        from utils.recovery_config import get_recovery_config
+        
+        recovery_config = get_recovery_config()
+        
+        if not recovery_config.enabled:
+            raise HTTPException(status_code=400, detail="Recovery system is disabled")
+        
+        # Note: In a real implementation, you'd need access to the actual telegram client
+        # For now, we'll create a placeholder response
+        operation_id = await db_manager.start_recovery_operation(
+            operation_type="manual",
+            metadata={
+                "triggered_by": "api",
+                "user_id": trigger_request.user_id,
+                "max_messages": trigger_request.max_messages,
+                "api_trigger_time": datetime.now().isoformat()
+            }
+        )
+        
+        # Update operation as completed (placeholder - in real implementation this would be async)
+        await db_manager.update_recovery_operation(
+            operation_id=operation_id,
+            status="completed",
+            users_checked=1 if trigger_request.user_id else 0,
+            messages_recovered=0,  # Would be actual count
+            messages_skipped=0
+        )
+        
+        return {
+            "status": "triggered",
+            "operation_id": operation_id,
+            "user_id": trigger_request.user_id,
+            "max_messages": trigger_request.max_messages,
+            "message": f"Recovery operation started for {'user ' + trigger_request.user_id if trigger_request.user_id else 'all users'}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error triggering recovery: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger recovery: {str(e)}")
+
+
+@app.get("/recovery/history")
+@limiter.limit("60/minute")
+async def get_recovery_history(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200, description="Number of operations to retrieve"),
+    operation_type: Optional[str] = Query(None, regex="^(startup|periodic|manual)$", description="Filter by operation type"),
+    api_key: str = Depends(verify_api_key)
+):
+    """Get recovery operations history."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"operations": [], "message": "Database mode is skip"}
+        
+        operations = await db_manager.get_recovery_operations(limit=limit, operation_type=operation_type)
+        
+        # Add calculated fields for frontend
+        for op in operations:
+            if op.get("started_at") and op.get("completed_at"):
+                start = op["started_at"]
+                end = op["completed_at"]
+                if isinstance(start, str):
+                    start = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                if isinstance(end, str):
+                    end = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                op["duration_seconds"] = (end - start).total_seconds()
+            
+            # Add efficiency metrics
+            messages_recovered = op.get("messages_recovered", 0)
+            users_checked = op.get("users_checked", 0)
+            if users_checked > 0:
+                op["messages_per_user"] = messages_recovered / users_checked
+            else:
+                op["messages_per_user"] = 0
+        
+        return {
+            "operations": operations,
+            "total_count": len(operations),
+            "filters": {
+                "limit": limit,
+                "operation_type": operation_type
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting recovery history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve recovery history")
+
+
+@app.get("/recovery/cursor/{user_id}")
+@limiter.limit("60/minute")
+async def get_recovery_cursor(
+    request: Request,
+    user_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get message processing cursor for a specific user."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"cursor": None, "message": "Database mode is skip"}
+        
+        cursor = await db_manager.get_user_cursor(user_id)
+        
+        if not cursor:
+            raise HTTPException(status_code=404, detail=f"No cursor found for user {user_id}")
+        
+        # Add calculated fields
+        last_recovery = cursor.get("last_recovery_check")
+        if last_recovery:
+            if isinstance(last_recovery, str):
+                last_recovery = datetime.fromisoformat(last_recovery.replace('Z', '+00:00'))
+            cursor["hours_since_last_recovery"] = (datetime.now() - last_recovery).total_seconds() / 3600
+        
+        return {
+            "cursor": cursor,
+            "user_id": user_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting recovery cursor for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve recovery cursor")
+
+
+@app.post("/recovery/cursor/{user_id}")
+@limiter.limit("30/minute")
+async def update_recovery_cursor(
+    request: Request,
+    user_id: str,
+    cursor_request: CursorUpdateRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Update message processing cursor for a specific user."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {"status": "skipped", "message": "Database mode is skip"}
+        
+        # Parse the telegram_date
+        try:
+            telegram_date = datetime.fromisoformat(cursor_request.telegram_date.replace('Z', '+00:00'))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid telegram_date format: {e}")
+        
+        # Update cursor in database
+        await db_manager.update_user_cursor(
+            user_id=user_id,
+            telegram_message_id=cursor_request.telegram_message_id,
+            telegram_date=telegram_date,
+            messages_recovered=cursor_request.messages_recovered
+        )
+        
+        # Get updated cursor to return
+        updated_cursor = await db_manager.get_user_cursor(user_id)
+        
+        return {
+            "status": "updated",
+            "user_id": user_id,
+            "cursor": updated_cursor,
+            "message": f"Cursor updated for user {user_id}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating recovery cursor for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update recovery cursor")
+
+
+@app.get("/recovery/health")
+@limiter.limit("10/minute")
+async def get_recovery_health(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get comprehensive recovery system health status."""
+    try:
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        if database_mode == "skip":
+            return {
+                "overall_status": "disabled",
+                "message": "Database mode is skip",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Import health check module
+        from monitoring.recovery_health_check import RecoveryHealthChecker
+        
+        health_checker = RecoveryHealthChecker(db_manager)
+        health_report = await health_checker.perform_health_check()
+        
+        return health_report
+        
+    except ImportError:
+        return {
+            "overall_status": "error",
+            "error": "Health check module not available",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error performing recovery health check: {e}")
+        return {
+            "overall_status": "critical",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# =============================================
+# COHERENCE & SCHEDULE SYSTEM ENDPOINTS
+# =============================================
+
+class CommitmentRequest(BaseModel):
+    commitment_text: str = Field(..., min_length=5, max_length=200)
+    timestamp: str = Field(..., description="ISO timestamp for the commitment")
+    details: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+class CoherenceAnalysisRequest(BaseModel):
+    llm1_response: str = Field(..., min_length=1, max_length=1000)
+    user_id: str = Field(..., min_length=1)
+    time_context: Dict[str, str] = Field(default_factory=dict)
+
+@app.get("/api/coherence/metrics")
+@limiter.limit("30/minute")
+async def get_coherence_metrics(
+    request: Request,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get coherence and schedule metrics for dashboard."""
+    try:
+        async with db_manager.get_connection() as conn:
+            # Count active commitments
+            active_commitments = await conn.fetchval("""
+                SELECT COUNT(*) FROM nadia_commitments 
+                WHERE status = 'active' AND commitment_timestamp > NOW()
+            """)
+            
+            # Calculate coherence score (percentage of OK analyses)
+            coherence_stats = await conn.fetchrow("""
+                SELECT 
+                    COUNT(*) as total_analyses,
+                    COUNT(*) FILTER (WHERE analysis_status = 'OK') as ok_count,
+                    COUNT(*) FILTER (WHERE json_parse_success = false) as json_failures
+                FROM coherence_analysis 
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+            
+            total = coherence_stats['total_analyses'] if coherence_stats else 0
+            ok_count = coherence_stats['ok_count'] if coherence_stats else 0
+            json_failures = coherence_stats['json_failures'] if coherence_stats else 0
+            
+            coherence_score = (ok_count / total * 100) if total > 0 else 100.0
+            json_success_rate = ((total - json_failures) / total * 100) if total > 0 else 100.0
+            
+            # Count schedule conflicts (last 24h)
+            schedule_conflicts = await conn.fetchval("""
+                SELECT COUNT(*) FROM coherence_analysis 
+                WHERE analysis_status = 'CONFLICTO_DE_DISPONIBILIDAD'
+                AND created_at > NOW() - INTERVAL '24 hours'
+            """)
+            
+            # Count identity conflicts (last 24h)
+            identity_conflicts = await conn.fetchval("""
+                SELECT COUNT(*) FROM coherence_analysis 
+                WHERE analysis_status = 'CONFLICTO_DE_IDENTIDAD'
+                AND created_at > NOW() - INTERVAL '24 hours'
+            """)
+            
+            return {
+                "active_commitments": active_commitments or 0,
+                "coherence_score": round(coherence_score, 1),
+                "schedule_conflicts_24h": schedule_conflicts or 0,
+                "identity_conflicts_24h": identity_conflicts or 0,
+                "total_analyses_24h": total,
+                "json_success_rate": round(json_success_rate, 1),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting coherence metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get coherence metrics")
+
+@app.get("/users/{user_id}/commitments")
+@limiter.limit("60/minute")
+async def get_user_commitments(
+    user_id: str,
+    status: Optional[str] = Query(None, regex="^(active|fulfilled|expired|cancelled)$"),
+    limit: int = Query(20, ge=1, le=100),
+    request: Request = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get commitments for a specific user."""
+    try:
+        async with db_manager.get_connection() as conn:
+            where_clause = "WHERE user_id = $1"
+            params = [user_id]
+            
+            if status:
+                where_clause += " AND status = $2"
+                params.append(status)
+                
+            query = f"""
+                SELECT id, commitment_timestamp, details, commitment_text, status, created_at
+                FROM nadia_commitments 
+                {where_clause}
+                ORDER BY commitment_timestamp DESC
+                LIMIT ${len(params) + 1}
+            """
+            params.append(limit)
+            
+            rows = await conn.fetch(query, *params)
+            
+            commitments = []
+            for row in rows:
+                commitments.append({
+                    "id": str(row['id']),
+                    "timestamp": row['commitment_timestamp'].isoformat(),
+                    "details": row['details'],
+                    "text": row['commitment_text'],
+                    "status": row['status'],
+                    "created_at": row['created_at'].isoformat()
+                })
+            
+            return {
+                "commitments": commitments,
+                "total": len(commitments),
+                "user_id": user_id
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting commitments for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user commitments")
+
+@app.get("/api/coherence/violations")
+@limiter.limit("30/minute")
+async def get_coherence_violations(
+    limit: int = Query(50, ge=1, le=200),
+    severity: Optional[str] = Query(None, regex="^(CONFLICTO_DE_IDENTIDAD|CONFLICTO_DE_DISPONIBILIDAD)$"),
+    request: Request = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get recent coherence violations for monitoring."""
+    try:
+        async with db_manager.get_connection() as conn:
+            where_clause = "WHERE analysis_status != 'OK'"
+            params = []
+            
+            if severity:
+                where_clause += " AND analysis_status = $1"
+                params.append(severity)
+                
+            query = f"""
+                SELECT ca.id, ca.interaction_id, ca.analysis_status, ca.conflict_details,
+                       ca.created_at, ca.json_parse_success, ca.llm_model_used
+                FROM coherence_analysis ca
+                {where_clause}
+                ORDER BY ca.created_at DESC
+                LIMIT ${len(params) + 1}
+            """
+            params.append(limit)
+            
+            rows = await conn.fetch(query, *params)
+            
+            violations = []
+            for row in rows:
+                violations.append({
+                    "id": str(row['id']),
+                    "interaction_id": str(row['interaction_id']) if row['interaction_id'] else None,
+                    "type": row['analysis_status'],
+                    "details": row['conflict_details'],
+                    "created_at": row['created_at'].isoformat(),
+                    "json_success": row['json_parse_success'],
+                    "model_used": row['llm_model_used']
+                })
+            
+            return {
+                "violations": violations,
+                "total": len(violations),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting coherence violations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get coherence violations")
+
+@app.get("/schedule/conflicts/{user_id}")
+@limiter.limit("60/minute")
+async def check_schedule_conflicts(
+    user_id: str,
+    proposed_time: str = Query(..., description="ISO timestamp for proposed activity"),
+    duration_minutes: int = Query(60, ge=5, le=480),
+    request: Request = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """Check for schedule conflicts with a proposed time."""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Parse proposed time
+        try:
+            proposed_dt = datetime.fromisoformat(proposed_time)
+            end_time = proposed_dt + timedelta(minutes=duration_minutes)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid timestamp format")
+        
+        async with db_manager.get_connection() as conn:
+            conflicts = await conn.fetch("""
+                SELECT id, commitment_timestamp, details, commitment_text
+                FROM nadia_commitments
+                WHERE user_id = $1 
+                AND status = 'active'
+                AND commitment_timestamp BETWEEN $2 AND $3
+                ORDER BY commitment_timestamp ASC
+            """, user_id, proposed_dt, end_time)
+            
+            conflict_list = []
+            for conflict in conflicts:
+                conflict_list.append({
+                    "id": str(conflict['id']),
+                    "timestamp": conflict['commitment_timestamp'].isoformat(),
+                    "activity": conflict['details'].get('activity', 'unknown'),
+                    "text": conflict['commitment_text']
+                })
+            
+            return {
+                "has_conflicts": len(conflict_list) > 0,
+                "conflicts": conflict_list,
+                "proposed_time": proposed_time,
+                "duration_minutes": duration_minutes,
+                "user_id": user_id
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking schedule conflicts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check schedule conflicts")
 
 
 # Configuration endpoint for frontend

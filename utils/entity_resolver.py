@@ -53,8 +53,8 @@ class EntityResolver:
             logger.debug(f"Entity {user_id} found in cache")
             return True
             
-        # Intentar resolver
-        return await self._resolve_entity(user_id)
+        # Intentar resolver usando get_input_entity para typing simulation
+        return await self._resolve_entity_for_typing(user_id)
     
     async def preload_entity_for_message(self, user_id: int) -> None:
         """
@@ -146,6 +146,58 @@ class EntityResolver:
             
         except Exception as e:
             logger.warning(f"Failed to resolve entity {user_id} (attempt {attempts + 1}): {e}")
+            return False
+    
+    async def _resolve_entity_for_typing(self, user_id: int) -> bool:
+        """
+        Método específico para resolver entidades para typing simulation.
+        
+        Usa diferentes estrategias de Telethon para obtener la entidad.
+        """
+        attempts = self.resolution_attempts.get(user_id, 0)
+        
+        if attempts >= self.max_retry_attempts:
+            logger.warning(f"Max retry attempts reached for user {user_id}")
+            return False
+            
+        try:
+            # Incrementar contador de intentos
+            self.resolution_attempts[user_id] = attempts + 1
+            
+            # Estrategia 1: Usar get_input_entity (más confiable para typing)
+            try:
+                input_entity = await self.client.get_input_entity(user_id)
+                self.entity_cache[user_id] = input_entity
+                logger.debug(f"Successfully resolved input entity for user {user_id}")
+                
+                # Limpiar contador de intentos
+                if user_id in self.resolution_attempts:
+                    del self.resolution_attempts[user_id]
+                    
+                return True
+                
+            except Exception:
+                # Estrategia 2: Fallback a get_entity normal
+                entity = await self.client.get_entity(user_id)
+                self.entity_cache[user_id] = entity
+                logger.debug(f"Successfully resolved entity for user {user_id} (fallback)")
+                
+                # Limpiar contador de intentos
+                if user_id in self.resolution_attempts:
+                    del self.resolution_attempts[user_id]
+                    
+                return True
+                
+        except PeerIdInvalidError:
+            logger.warning(f"Invalid peer ID: {user_id}")
+            return False
+            
+        except FloodWaitError as e:
+            logger.warning(f"Flood wait error for user {user_id}: {e.seconds}s")
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity {user_id} for typing (attempt {attempts + 1}): {e}")
             return False
     
     async def _periodic_cleanup(self) -> None:

@@ -1,0 +1,180 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement
+title: "[FEATURE] "
+labels: ["enhancement", "needs-analysis"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand and evaluate your request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: I'm frustrated when... / It's difficult to... / There's no way to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see implemented
+      placeholder: I would like to see... / The system should... / A new feature that...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component Area
+      description: Which component would this feature primarily affect?
+      options:
+        - Telegram Bot (userbot.py)
+        - API Server (api/server.py)
+        - Dashboard (frontend)
+        - Database (models.py)
+        - LLM Integration (agents/)
+        - Memory System (memory/)
+        - Recovery System (recovery_agent.py)
+        - Protocol Manager (quarantine)
+        - Coherence System
+        - CI/CD Pipeline
+        - Documentation
+        - New Component
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How important is this feature for the project?
+      options:
+        - Critical (blocking core functionality)
+        - High (significantly improves user experience)
+        - Medium (nice to have, moderate impact)
+        - Low (minor improvement or convenience)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: llm_cost_analysis
+    attributes:
+      label: LLM Cost Impact Analysis
+      description: |
+        Please analyze the potential cost impact of this feature:
+      options:
+        - label: Feature would INCREASE LLM API costs (new API calls, longer prompts, etc.)
+        - label: Feature would DECREASE LLM API costs (better caching, fewer retries, etc.)
+        - label: Feature would add LLM calls but provide proportional value
+        - label: Feature has NO direct LLM cost impact
+        - label: Cost impact is unknown/needs analysis
+
+  - type: textarea
+    id: cost_details
+    attributes:
+      label: Cost Impact Details
+      description: |
+        If this feature affects LLM costs, please provide more details:
+      placeholder: |
+        - Estimated additional API calls per user/day
+        - Token usage changes (input/output)
+        - Caching opportunities or challenges
+        - Alternative implementations to minimize cost
+        - Expected ROI or user value vs cost
+
+  - type: checkboxes
+    id: implementation_considerations
+    attributes:
+      label: Implementation Considerations
+      description: |
+        Check all that apply to help with technical planning:
+      options:
+        - label: Requires database schema changes
+        - label: Requires new API endpoints
+        - label: Requires frontend/dashboard changes
+        - label: Requires new LLM prompts or agents
+        - label: Requires external service integration
+        - label: Requires configuration changes
+        - label: May affect existing functionality
+        - label: Requires new tests/validation
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Describe any alternative solutions or features you've considered
+      placeholder: |
+        Other approaches that could solve the same problem:
+        - Alternative A: ...
+        - Alternative B: ...
+        Why the proposed solution is preferred...
+
+  - type: textarea
+    id: user_stories
+    attributes:
+      label: User Stories
+      description: |
+        Provide user stories to clarify the feature requirements:
+      placeholder: |
+        As a [user type], I want [goal] so that [benefit].
+        
+        Examples:
+        - As an admin, I want to see LLM cost per user so that I can identify high-usage patterns
+        - As a reviewer, I want to batch approve similar messages so that I can work more efficiently
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: |
+        Define what "done" looks like for this feature:
+      placeholder: |
+        This feature will be considered complete when:
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] All tests pass
+        - [ ] Documentation is updated
+        - [ ] Performance impact is within acceptable limits
+
+  - type: dropdown
+    id: breaking_changes
+    attributes:
+      label: Breaking Changes
+      description: Would this feature introduce breaking changes?
+      options:
+        - "No breaking changes expected"
+        - "Minor breaking changes (backward compatibility possible)"
+        - "Major breaking changes (requires migration)"
+        - "Unknown - needs analysis"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, mockups, or examples:
+      placeholder: |
+        - Screenshots or mockups
+        - Similar features in other systems
+        - Links to relevant documentation
+        - Related issues or discussions
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you have completed these steps:
+      options:
+        - label: I have searched for existing feature requests that might be similar
+        - label: I have provided a clear problem statement and proposed solution
+        - label: I have analyzed the potential LLM cost impact
+        - label: I have considered alternative approaches
+        - label: I have defined clear acceptance criteria
