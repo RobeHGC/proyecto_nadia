@@ -48,6 +48,14 @@ class Config:
     entity_cache_size: int = 1000
     entity_warm_up_dialogs: int = 100
     
+    # MCP Configuration (addresses code review feedback)
+    mcp_script_path: Optional[str] = None
+    mcp_logs_dir: Optional[str] = None
+    mcp_config_dir: Optional[str] = None
+    mcp_health_interval: int = 300  # 5 minutes
+    mcp_alert_cooldown: int = 30    # 30 minutes
+    mcp_max_alerts_hour: int = 10
+    
     # opcionales / con default
     debug: bool = False
     log_level: str = "INFO"
@@ -94,6 +102,14 @@ class Config:
             # Entity Resolution configuration
             entity_cache_size=int(os.getenv("ENTITY_CACHE_SIZE", "1000")),
             entity_warm_up_dialogs=int(os.getenv("ENTITY_WARM_UP_DIALOGS", "100")),
+            
+            # MCP Configuration (addresses code review feedback)
+            mcp_script_path=os.getenv("MCP_SCRIPT_PATH"),
+            mcp_logs_dir=os.getenv("MCP_LOGS_DIR"),
+            mcp_config_dir=os.getenv("MCP_CONFIG_DIR"),
+            mcp_health_interval=int(os.getenv("MCP_HEALTH_INTERVAL", "300")),
+            mcp_alert_cooldown=int(os.getenv("MCP_ALERT_COOLDOWN", "30")),
+            mcp_max_alerts_hour=int(os.getenv("MCP_MAX_ALERTS_HOUR", "10")),
             
             # Legacy and optional
             openai_model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),

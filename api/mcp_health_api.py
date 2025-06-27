@@ -44,7 +44,12 @@ class MCPHealthAPI(RedisConnectionMixin):
     """MCP Health API implementation"""
     
     def __init__(self):
-        self.script_path = "/home/rober/projects/chatbot_nadia/scripts/mcp-workflow.sh"
+        # Use environment variable with fallback to project-relative path
+        project_root = os.environ.get('PYTHONPATH', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.script_path = os.environ.get(
+            'MCP_SCRIPT_PATH',
+            os.path.join(project_root, 'scripts', 'mcp-workflow.sh')
+        )
     
     @handle_errors
     async def get_latest_health_status(self, command: str) -> Optional[HealthStatus]:

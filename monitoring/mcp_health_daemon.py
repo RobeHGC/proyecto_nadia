@@ -105,15 +105,31 @@ class MCPHealthDaemon(RedisConnectionMixin):
     async def _run_mcp_command(self, command: str) -> Dict[str, Any]:
         """Execute MCP workflow command and return results"""
         try:
-            script_path = Path(__file__).parent.parent / "scripts" / "mcp-workflow.sh"
+            # Use configurable script path
+            script_path = os.environ.get(
+                'MCP_SCRIPT_PATH',
+                str(Path(__file__).parent.parent / "scripts" / "mcp-workflow.sh")
+            )
             
+            # Validate script exists
+            if not os.path.exists(script_path):
+                raise FileNotFoundError(f"MCP workflow script not found: {script_path}")
+            
+            # Add timeout to prevent hanging
             process = await asyncio.create_subprocess_exec(
-                str(script_path), command,
+                script_path, command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=300  # 5 minute timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                raise TimeoutError(f"MCP command {command} timed out after 5 minutes")
             
             result = {
                 'command': command,
@@ -124,17 +140,24 @@ class MCPHealthDaemon(RedisConnectionMixin):
                 'success': process.returncode == 0
             }
             
+            # Log command execution details
+            if result['success']:
+                self.logger.debug(f"MCP command {command} completed successfully")
+            else:
+                self.logger.warning(f"MCP command {command} failed with exit code {process.returncode}: {result['stderr']}")
+            
             return result
             
         except Exception as e:
-            self.logger.error(f"Failed to run MCP command {command}: {e}")
+            self.logger.error(f"Failed to run MCP command {command}: {e}", exc_info=True)
             return {
                 'command': command,
                 'timestamp': now_iso(),
                 'exit_code': -1,
                 'stdout': '',
                 'stderr': str(e),
-                'success': False
+                'success': False,
+                'error_type': type(e).__name__
             }
     
     async def _analyze_health_result(self, result: Dict[str, Any]) -> Dict[str, Any]:

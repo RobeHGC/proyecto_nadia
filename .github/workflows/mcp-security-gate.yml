@@ -44,7 +44,6 @@ jobs:
         echo "::group::MCP Security Scan"
         ./scripts/mcp-workflow.sh security-check
         echo "::endgroup::"
-      continue-on-error: true
       
     - name: 🔐 Secrets Detection
       id: secrets-check
