@@ -259,6 +259,12 @@ python monitoring/recovery_health_check.py
 PYTHONPATH=/home/rober/projects/chatbot_nadia pytest -v           # Run all tests
 PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_coherence_integration.py -q  # Run specific test
 
+# Resilience & Performance Testing (Epic 4)
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_load_performance.py -v      # Load testing
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_api_resilience.py -v        # API failure testing
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_concurrent_processing.py -v # Concurrency testing
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_resource_exhaustion.py -v   # Resource limits testing
+
 # GitHub Issues
 gh issue create --template bug_report                             # Create bug report
 gh issue create --template feature_request                        # Create feature request
@@ -376,4 +382,79 @@ user_current_status (
 - Modular frontend with clean separation
 - Entity resolution for new Telegram users
 
-**Last Updated**: June 25, 2025 (7:15 PM) - User management and critical fixes
+## Resilience & Performance Testing (Epic 4 - June 27, 2025) 
+
+### Test Suite Overview
+Comprehensive testing framework for system robustness under load and failure conditions:
+
+```bash
+# Load & Performance Testing
+tests/test_load_performance.py      # Message burst, concurrent users, sustained load
+tests/test_api_resilience.py        # API timeouts, rate limits, network failures  
+tests/test_concurrent_processing.py # Race conditions, memory access, queue safety
+tests/test_resource_exhaustion.py   # Memory/CPU/connection limits, graceful degradation
+```
+
+### Key Test Frameworks
+
+#### LoadTestingFramework
+```python
+# Test message processing under load
+await load_tester.simulate_message_burst(count=100, duration_seconds=15)
+await load_tester.simulate_concurrent_users(users=25, messages_per_user=4)
+await load_tester.measure_resource_usage(duration_seconds=20)
+```
+
+#### APIFailureSimulator  
+```python
+# Test API resilience patterns
+async with api_simulator.simulate_api_timeout("openai", timeout_duration=30.0):
+async with api_simulator.simulate_rate_limiting("gemini", failure_rate=0.8):
+async with api_simulator.simulate_network_failures("openai", failure_rate=0.5):
+```
+
+#### ConcurrencyTestFramework
+```python
+# Test concurrent access safety
+await concurrency_tester.simulate_concurrent_memory_access(user_count=20, operations_per_user=15)
+await concurrency_tester.simulate_redis_connection_competition(concurrent_connections=25)
+```
+
+#### ResourceExhaustionSimulator
+```python
+# Test system limits and degradation
+await resource_simulator.simulate_memory_exhaustion(target_mb=100)
+await resource_simulator.simulate_connection_exhaustion(max_connections=50)
+await resource_simulator.simulate_cpu_exhaustion(duration_seconds=10, cpu_threads=4)
+```
+
+### Performance Benchmarks
+- **Response Time**: <2s average under normal load, <5s under stress
+- **Throughput**: 100+ messages/minute sustained processing
+- **Memory Usage**: <500MB stable operation, <1GB under load  
+- **Error Rate**: <1% under normal load, <5% under stress
+- **Recovery**: System recovers to normal operation within 5 minutes
+
+### Resilience Patterns Tested
+1. **API Failure Handling**: Timeout protection, rate limit respect, graceful fallback
+2. **Concurrent Processing**: Race condition prevention, resource contention management  
+3. **Resource Management**: Memory leak detection, connection pool management
+4. **Queue Safety**: Message loss prevention, duplicate processing detection
+5. **Circuit Breaker**: Cascading failure prevention, automatic recovery
+6. **Graceful Degradation**: Performance degradation under increasing load
+
+### Running Resilience Tests
+```bash
+# Quick validation (core functionality)
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_load_performance.py::TestLoadPerformance::test_message_burst_light_load -v
+
+# Full resilience suite (extended runtime)
+PYTHONPATH=/home/rober/projects/chatbot_nadia pytest tests/test_*_resilience.py tests/test_*_performance.py -v
+
+# Specific test categories
+pytest tests/test_load_performance.py -k "light"           # Light load tests only
+pytest tests/test_concurrent_processing.py -k "memory"    # Memory concurrency tests  
+pytest tests/test_resource_exhaustion.py -k "connection"  # Connection limit tests
+```
+
+**Last Updated**: June 27, 2025 (11:30 PM) - Epic 4: Resilience & Performance Testing Implementation
