@@ -2,6 +2,7 @@
 """Test script to verify coherence pipeline integration."""
 import asyncio
 import logging
+import pytest
 from datetime import datetime
 
 # Setup logging
@@ -9,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.asyncio
 async def test_coherence_integration():
     """Test the coherence pipeline is properly integrated."""
     try:
