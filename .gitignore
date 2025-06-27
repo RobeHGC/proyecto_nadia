@@ -56,3 +56,4 @@ ARCHITECTURE.md
 REQUIREMENTS.md
 node_modules/
 package-lock.json
+package.json

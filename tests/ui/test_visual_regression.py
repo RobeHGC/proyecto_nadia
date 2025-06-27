@@ -25,8 +25,9 @@ class TestVisualRegression:
         await dashboard.navigate()
         await dashboard.wait_for_dashboard_load()
         
-        # Wait for any dynamic content to stabilize
-        await asyncio.sleep(2)
+        # Wait for dynamic content to stabilize using condition-based waiting
+        await dashboard.wait_for_element(".dashboard-content, .review-queue, #reviews-tab")
+        await dashboard._wait_for_api_requests()
         
         # Capture full dashboard
         matches = await visual_regression.capture_and_compare(
@@ -107,7 +108,9 @@ class TestVisualRegression:
         if not success:
             pytest.skip("Analytics tab not available")
         
-        await asyncio.sleep(3)  # Allow charts/data to load
+        # Wait for analytics content to load properly
+        await dashboard.wait_for_element(".analytics-content, #analytics-content, .dashboard-analytics")
+        await dashboard._wait_for_api_requests()
         
         # Capture analytics content
         content_selectors = [

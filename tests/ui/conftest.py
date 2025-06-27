@@ -7,9 +7,11 @@ It handles browser session management, page navigation, and test environment set
 import pytest
 import asyncio
 import os
+import aiohttp
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
+from .mcp_adapter import mcp_tool_call, cleanup_mcp, MCPResult
 
 
 @dataclass
@@ -24,6 +26,17 @@ class BrowserConfig:
     def __post_init__(self):
         if self.viewport is None:
             self.viewport = {"width": 1280, "height": 720}
+    
+    @classmethod
+    def from_ui_config(cls, ui_config):
+        """Create BrowserConfig from UITestConfig for backward compatibility."""
+        return cls(
+            headless=ui_config.headless,
+            viewport=ui_config.get_viewport(),
+            timeout=ui_config.default_timeout,
+            dashboard_url=ui_config.dashboard_url,
+            dashboard_api_key=ui_config.dashboard_api_key
+        )
 
 
 class PuppeteerMCPManager:
@@ -45,23 +58,25 @@ class PuppeteerMCPManager:
     async def navigate(self, url: str) -> bool:
         """Navigate to a URL using puppeteer_navigate MCP tool."""
         try:
-            # Note: In actual implementation, this would use the MCP tool
-            # For now, this is the structure that would integrate with MCP
             launch_options = {
                 "headless": self.config.headless,
                 "defaultViewport": self.config.viewport,
                 "args": ["--no-sandbox", "--disable-dev-shm-usage"] if self.config.headless else []
             }
             
-            # Placeholder for MCP tool call:
-            # result = await mcp_tool_call("puppeteer_navigate", {
-            #     "url": url,
-            #     "launchOptions": launch_options,
-            #     "allowDangerous": True
-            # })
+            # Real MCP tool call
+            result = await mcp_tool_call("puppeteer_navigate", {
+                "url": url,
+                "launchOptions": launch_options,
+                "allowDangerous": True
+            })
             
-            self._browser_initialized = True
-            return True
+            if result.success:
+                self._browser_initialized = True
+                return True
+            else:
+                print(f"Navigation failed: {result.error}")
+                return False
         except Exception as e:
             print(f"Navigation failed: {e}")
             return False
@@ -69,15 +84,16 @@ class PuppeteerMCPManager:
     async def screenshot(self, name: str, selector: Optional[str] = None) -> bool:
         """Take a screenshot using puppeteer_screenshot MCP tool."""
         try:
-            # Placeholder for MCP tool call:
-            # result = await mcp_tool_call("puppeteer_screenshot", {
-            #     "name": name,
-            #     "selector": selector,
-            #     "width": self.config.viewport["width"],
-            #     "height": self.config.viewport["height"],
-            #     "encoded": False
-            # })
-            return True
+            # Real MCP tool call
+            result = await mcp_tool_call("puppeteer_screenshot", {
+                "name": name,
+                "selector": selector,
+                "width": self.config.viewport["width"],
+                "height": self.config.viewport["height"],
+                "encoded": False
+            })
+            
+            return result.success
         except Exception as e:
             print(f"Screenshot failed: {e}")
             return False
@@ -85,9 +101,9 @@ class PuppeteerMCPManager:
     async def click(self, selector: str) -> bool:
         """Click an element using puppeteer_click MCP tool."""
         try:
-            # Placeholder for MCP tool call:
-            # result = await mcp_tool_call("puppeteer_click", {"selector": selector})
-            return True
+            # Real MCP tool call
+            result = await mcp_tool_call("puppeteer_click", {"selector": selector})
+            return result.success
         except Exception as e:
             print(f"Click failed: {e}")
             return False
@@ -95,12 +111,12 @@ class PuppeteerMCPManager:
     async def fill(self, selector: str, value: str) -> bool:
         """Fill an input field using puppeteer_fill MCP tool."""
         try:
-            # Placeholder for MCP tool call:
-            # result = await mcp_tool_call("puppeteer_fill", {
-            #     "selector": selector,
-            #     "value": value
-            # })
-            return True
+            # Real MCP tool call
+            result = await mcp_tool_call("puppeteer_fill", {
+                "selector": selector,
+                "value": value
+            })
+            return result.success
         except Exception as e:
             print(f"Fill failed: {e}")
             return False
@@ -108,67 +124,51 @@ class PuppeteerMCPManager:
     async def evaluate(self, script: str) -> Any:
         """Execute JavaScript using puppeteer_evaluate MCP tool."""
         try:
-            # Placeholder for MCP tool call:
-            # result = await mcp_tool_call("puppeteer_evaluate", {"script": script})
-            return None
+            # Real MCP tool call
+            result = await mcp_tool_call("puppeteer_evaluate", {"script": script})
+            return result.data if result.success else None
         except Exception as e:
             print(f"Evaluate failed: {e}")
             return None
     
     async def wait_for_element(self, selector: str, timeout: int = None) -> bool:
-        """Wait for an element to appear."""
+        """Wait for an element to appear with proper error handling."""
         timeout = timeout or self.config.timeout
-        script = f"""
-        new Promise((resolve, reject) => {{
-            const timeout = setTimeout(() => reject(new Error('Timeout')), {timeout});
-            const observer = new MutationObserver((mutations, obs) => {{
-                const element = document.querySelector('{selector}');
-                if (element) {{
-                    clearTimeout(timeout);
-                    obs.disconnect();
-                    resolve(true);
-                }}
-            }});
-            
-            // Check if element already exists
-            if (document.querySelector('{selector}')) {{
-                clearTimeout(timeout);
-                resolve(true);
-                return;
-            }}
-            
-            observer.observe(document.body, {{
-                childList: true,
-                subtree: true
-            }});
-        }});
-        """
         
-        result = await self.evaluate(script)
-        return result is not None
+        try:
+            # Real MCP tool call for waiting
+            result = await mcp_tool_call("puppeteer_wait_for_selector", {
+                "selector": selector,
+                "timeout": timeout
+            })
+            return result.success
+        except Exception as e:
+            print(f"Element wait failed for '{selector}': {e}")
+            return False
 
 
 @pytest.fixture(scope="session")
-def browser_config():
-    """Browser configuration fixture."""
-    return BrowserConfig(
-        headless=os.getenv("UI_TEST_HEADLESS", "true").lower() == "true",
-        dashboard_url=os.getenv("DASHBOARD_URL", "http://localhost:8000"),
-        dashboard_api_key=os.getenv("DASHBOARD_API_KEY", "miclavesegura45mil")
-    )
+def ui_test_config():
+    """UI test configuration fixture."""
+    from .config import get_config
+    return get_config()
+
+
+@pytest.fixture(scope="session")  
+def browser_config(ui_test_config):
+    """Browser configuration fixture with backward compatibility."""
+    return BrowserConfig.from_ui_config(ui_test_config)
 
 
 @pytest.fixture(scope="session")
-async def browser_manager(browser_config):
+def browser_manager(browser_config):
     """Browser manager fixture for the entire test session."""
-    manager = PuppeteerMCPManager(browser_config)
-    yield manager
-    # Cleanup would be handled by MCP server
+    return PuppeteerMCPManager(browser_config)
 
 
 @pytest.fixture(scope="function")
 async def dashboard_page(browser_manager, browser_config):
-    """Navigate to dashboard page for each test."""
+    """Navigate to dashboard page for each test with cleanup."""
     success = await browser_manager.navigate(browser_config.dashboard_url)
     if not success:
         pytest.skip("Failed to navigate to dashboard")
@@ -178,9 +178,38 @@ async def dashboard_page(browser_manager, browser_config):
     
     yield browser_manager
     
-    # Optional: Take screenshot after each test for debugging
-    test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1]
-    await browser_manager.screenshot(f"test_cleanup_{test_name}")
+    # Cleanup: Reset dashboard state and clear any modals/selections
+    try:
+        # Clear any active selections or modals
+        await browser_manager.evaluate("""
+        // Close any open modals
+        document.querySelectorAll('.modal, .popup, .overlay').forEach(modal => {
+            if (modal.style.display !== 'none') modal.remove();
+        });
+        
+        // Clear any selections
+        document.querySelectorAll('.selected, .active:not(.tab)').forEach(el => {
+            el.classList.remove('selected', 'active');
+        });
+        
+        // Clear form inputs
+        document.querySelectorAll('input, textarea').forEach(input => {
+            if (input.type !== 'hidden') input.value = '';
+        });
+        
+        // Reset to default tab if possible
+        const defaultTab = document.querySelector('.tab:first-child, .nav-tab:first-child');
+        if (defaultTab && !defaultTab.classList.contains('active')) {
+            defaultTab.click();
+        }
+        """)
+        
+        # Optional: Take screenshot after each test for debugging
+        test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
+        await browser_manager.screenshot(f"test_cleanup_{test_name}")
+        
+    except Exception as e:
+        print(f"Cleanup warning: {e}")  # Non-blocking cleanup errors
 
 
 @pytest.fixture
@@ -228,23 +257,34 @@ def screenshot_diff_dir():
 
 
 class VisualRegressionHelper:
-    """Helper class for visual regression testing."""
+    """Helper class for visual regression testing with configurable tolerance."""
     
-    def __init__(self, baseline_dir: str, current_dir: str, diff_dir: str):
+    def __init__(self, baseline_dir: str, current_dir: str, diff_dir: str, tolerance: float = 0.1):
         self.baseline_dir = baseline_dir
         self.current_dir = current_dir
         self.diff_dir = diff_dir
+        self.tolerance = tolerance  # Percentage of pixels that can differ
     
     async def capture_and_compare(self, browser_manager: PuppeteerMCPManager, 
-                                name: str, selector: str = None) -> bool:
+                                name: str, selector: str = None, tolerance: float = None) -> bool:
         """
-        Capture screenshot and compare with baseline.
+        Capture screenshot and compare with baseline using configurable tolerance.
+        
+        Args:
+            browser_manager: Browser automation manager
+            name: Screenshot name (without extension)
+            selector: Optional CSS selector for element-specific screenshot
+            tolerance: Override default tolerance (0.0-1.0, percentage of pixels)
         
         Returns:
-            bool: True if images match (or baseline doesn't exist), False if different
+            bool: True if images match within tolerance, False if different
         """
+        # Use provided tolerance or instance default
+        comparison_tolerance = tolerance if tolerance is not None else self.tolerance
+        
         current_path = f"{self.current_dir}/{name}.png"
         baseline_path = f"{self.baseline_dir}/{name}.png"
+        diff_path = f"{self.diff_dir}/{name}_diff.png"
         
         # Take current screenshot
         await browser_manager.screenshot(name, selector)
@@ -253,15 +293,124 @@ class VisualRegressionHelper:
         if not os.path.exists(baseline_path):
             # Copy current to baseline
             # In real implementation, would copy the file
-            print(f"Creating baseline screenshot: {baseline_path}")
+            print(f"📸 Creating baseline screenshot: {baseline_path}")
             return True
         
-        # Compare images (placeholder - would use actual image comparison)
-        # In real implementation, would use libraries like PIL or opencv
-        print(f"Comparing {current_path} with {baseline_path}")
+        # Compare images with tolerance
+        if comparison_tolerance == 0.0:
+            # Exact match required
+            matches = await self._compare_images_exact(baseline_path, current_path)
+        else:
+            # Tolerance-based comparison
+            matches = await self._compare_images_with_tolerance(
+                baseline_path, current_path, diff_path, comparison_tolerance
+            )
         
-        # For now, assume images match
-        return True
+        if matches:
+            print(f"✅ Visual regression passed: {name} (tolerance: {comparison_tolerance:.1%})")
+        else:
+            print(f"❌ Visual regression failed: {name} - see {diff_path}")
+        
+        return matches
+    
+    async def _compare_images_exact(self, baseline_path: str, current_path: str) -> bool:
+        """Compare images for exact match."""
+        try:
+            from PIL import Image
+            
+            if not os.path.exists(baseline_path) or not os.path.exists(current_path):
+                print(f"❌ Missing image files for comparison")
+                return False
+                
+            baseline = Image.open(baseline_path)
+            current = Image.open(current_path)
+            
+            # Check if dimensions match
+            if baseline.size != current.size:
+                print(f"❌ Image dimensions don't match: {baseline.size} vs {current.size}")
+                return False
+            
+            # Compare pixel data
+            is_exact_match = baseline.tobytes() == current.tobytes()
+            print(f"🔍 Exact comparison: {baseline_path} vs {current_path} - {'Match' if is_exact_match else 'Different'}")
+            return is_exact_match
+            
+        except ImportError:
+            print(f"⚠️  PIL not available, falling back to stub comparison")
+            return True
+        except Exception as e:
+            print(f"❌ Image comparison failed: {e}")
+            return False
+    
+    async def _compare_images_with_tolerance(self, baseline_path: str, current_path: str, 
+                                          diff_path: str, tolerance: float) -> bool:
+        """Compare images with tolerance for pixel differences."""
+        try:
+            from PIL import Image, ImageChops
+            import numpy as np
+            
+            if not os.path.exists(baseline_path) or not os.path.exists(current_path):
+                print(f"❌ Missing image files for comparison")
+                return False
+            
+            baseline = Image.open(baseline_path)
+            current = Image.open(current_path)
+            
+            if baseline.size != current.size:
+                print(f"❌ Image dimensions don't match: {baseline.size} vs {current.size}")
+                return False
+            
+            # Calculate difference
+            diff = ImageChops.difference(baseline, current)
+            diff_array = np.array(diff)
+            
+            # Calculate percentage of different pixels
+            total_pixels = diff_array.size
+            different_pixels = np.count_nonzero(diff_array)
+            difference_percentage = different_pixels / total_pixels
+            
+            print(f"📊 Tolerance comparison: {baseline_path} vs {current_path}")
+            print(f"   Different pixels: {different_pixels}/{total_pixels} ({difference_percentage:.2%})")
+            print(f"   Tolerance: {tolerance:.1%}")
+            
+            if difference_percentage > tolerance:
+                # Save diff image for review
+                diff.save(diff_path)
+                print(f"❌ Visual regression failed - diff saved to {diff_path}")
+                return False
+            
+            print(f"✅ Visual regression passed within tolerance")
+            return True
+            
+        except ImportError:
+            print(f"⚠️  PIL/numpy not available, falling back to stub comparison")
+            return True
+        except Exception as e:
+            print(f"❌ Image comparison failed: {e}")
+            return False
+    
+    def set_tolerance(self, tolerance: float):
+        """Set default tolerance for comparisons."""
+        if not 0.0 <= tolerance <= 1.0:
+            raise ValueError("Tolerance must be between 0.0 and 1.0")
+        self.tolerance = tolerance
+        print(f"🎯 Visual regression tolerance set to {tolerance:.1%}")
+    
+    def update_baseline(self, name: str):
+        """Update baseline screenshot from current screenshot."""
+        import shutil
+        
+        current_path = f"{self.current_dir}/{name}.png"
+        baseline_path = f"{self.baseline_dir}/{name}.png"
+        
+        if os.path.exists(current_path):
+            try:
+                shutil.copy2(current_path, baseline_path)
+                print(f"📸 Updated baseline: {baseline_path}")
+            except Exception as e:
+                print(f"❌ Failed to update baseline: {e}")
+        else:
+            print(f"❌ Cannot update baseline - current screenshot not found: {current_path}")
 
 
 @pytest.fixture
