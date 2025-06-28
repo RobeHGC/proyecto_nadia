@@ -76,10 +76,67 @@ class RateLimitViolation:
 class EnhancedRateLimiter(RedisConnectionMixin):
     """Enhanced rate limiter with role-based limits and progressive backoff."""
     
-    def __init__(self, redis_url: Optional[str] = None):
+    def __init__(self, redis_url: Optional[str] = None, config_file: Optional[str] = None):
         # Initialize the mixin properly
         self._redis = None
         self.redis_url = redis_url or 'redis://localhost:6379'
+        self.config_file = config_file or 'config/rate_limits.json'
+        self._config_last_modified = 0
+        
+        # Initialize configurations
+        self._load_configuration()
+    
+    def _load_configuration(self):
+        """Load configuration from file with hot-reload support."""
+        try:
+            import os
+            if os.path.exists(self.config_file):
+                stat = os.stat(self.config_file)
+                if stat.st_mtime > self._config_last_modified:
+                    with open(self.config_file, 'r') as f:
+                        config_data = json.load(f)
+                    
+                    # Load role limits from config
+                    role_config = config_data.get('role_limits', {})
+                    self.role_limits = {}
+                    
+                    for role_name, limits in role_config.items():
+                        try:
+                            if role_name == 'unauthenticated':
+                                continue  # Handle separately
+                            role = UserRole(role_name)
+                            self.role_limits[role] = RateLimitConfig(**limits)
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Invalid role config for {role_name}: {e}")
+                    
+                    # Load endpoint modifiers
+                    self.endpoint_modifiers = config_data.get('endpoint_modifiers', {})
+                    
+                    # Load default limit for unauthenticated
+                    unauth_config = role_config.get('unauthenticated', {})
+                    self.default_limit = RateLimitConfig(**unauth_config) if unauth_config else self._get_default_config()
+                    
+                    self._config_last_modified = stat.st_mtime
+                    logger.info(f"Rate limit configuration loaded from {self.config_file}")
+                    return
+            
+        except Exception as e:
+            logger.warning(f"Failed to load config from {self.config_file}: {e}, using defaults")
+        
+        # Fallback to hardcoded configuration
+        self._load_default_configuration()
+    
+    def _get_default_config(self) -> RateLimitConfig:
+        """Get default configuration for unauthenticated users."""
+        return RateLimitConfig(
+            requests_per_minute=20,
+            burst_allowance=5,
+            violation_penalty_minutes=30,
+            max_penalty_minutes=480
+        )
+    
+    def _load_default_configuration(self):
+        """Load hardcoded default configuration."""
         
         # Role-based rate limit configurations
         self.role_limits: Dict[UserRole, RateLimitConfig] = {
