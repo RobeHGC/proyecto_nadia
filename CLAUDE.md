@@ -15,7 +15,18 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 4. **Context**: 50 messages per user stored in Redis (7-day expiration)
 5. **Debouncing**: 60-second delay for message batching
 
-### Recent Updates (Jun 25 - Dashboard Critical Fixes & User Management)
+### Recent Updates (Jun 28 - API Server Dependency Fix & System Testing)
+- ✅ **API SERVER CRITICAL FIX**: Resolved startup failure (Issue #63)
+  - Fixed missing `python-jose[cryptography]` dependency for JWT operations
+  - Updated pyproject.toml with all required dependencies
+  - Added regression tests to prevent future dependency issues
+  - Created diagnostic tools for troubleshooting startup problems
+- ✅ **DEPENDENCY MANAGEMENT**: Comprehensive dependency resolution
+  - Added `python-dotenv`, `passlib[bcrypt]`, `cryptography` packages
+  - All authentication and JWT functionality now operational
+  - API server starts successfully without import errors
+
+### Previous Updates (Jun 25 - Dashboard Critical Fixes & User Management)
 - ✅ **DASHBOARD CRITICAL BUG FIXES**: Resolved all major errors from bugs.md
   - Fixed `user_current_status` table missing (created with migrations)
   - Fixed review queue showing approved messages (Redis fallback issue)
@@ -65,8 +76,10 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 
 ### Running Services
 ```bash
-# API server (port 8000)
-PYTHONPATH=/home/rober/projects/chatbot_nadia python -m api.server
+# API server (port 8000) - Multiple startup options:
+PYTHONPATH=/home/rober/projects/chatbot_nadia python -m api.server   # Standard method
+python start_api_server.py                                          # Simplified startup script
+python test_api_startup.py                                          # Diagnostic tool if issues
 
 # Dashboard (port 3000) 
 python dashboard/backend/static_server.py
