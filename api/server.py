@@ -22,6 +22,10 @@ from llms.model_registry import get_model_registry
 from llms.dynamic_router import get_dynamic_router
 from utils.config import Config
 from .data_analytics import analytics_manager, AnalyticsDataRequest, BackupRequest, CleanDataRequest
+from .auth_routes import router as auth_router
+from api.middleware.auth import AuthenticationMiddleware, get_current_user
+from api.middleware.rbac import require_permission, require_admin, require_reviewer
+from auth.rbac_manager import Permission
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,6 +191,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+# Add authentication middleware
+app.add_middleware(AuthenticationMiddleware, allow_legacy_api_key=True)
+
 # Configuración global
 config = Config.from_env()
 memory_manager = UserMemoryManager(config.redis_url)
@@ -250,6 +257,9 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
         )
     return credentials.credentials
 
+
+# Include authentication routes
+app.include_router(auth_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -835,7 +845,12 @@ async def get_review(review_id: str):
 
 
 @app.post("/reviews/{review_id}/approve")
-async def approve_review(review_id: str, request: ReviewApprovalRequest):
+@require_permission(Permission.MESSAGE_APPROVE)
+async def approve_review(
+    review_id: str, 
+    request: ReviewApprovalRequest,
+    current_user: dict = Depends(get_current_user)
+):
     """Approve a review and send the message."""
     try:
         # Check if database mode is skip
@@ -843,7 +858,7 @@ async def approve_review(review_id: str, request: ReviewApprovalRequest):
         
         if database_mode != "skip":
             # Start the review (mark as reviewing)
-            started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
+            started = await db_manager.start_review(review_id, current_user['email'])
             if not started:
                 raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
 
