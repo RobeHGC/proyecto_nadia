@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from api.middleware.enhanced_rate_limiting import EnhancedRateLimitMiddleware
 
 from database.models import DatabaseManager
 from memory.user_memory import UserMemoryManager
@@ -191,11 +192,14 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+# Configuración global
+config = Config.from_env()
+
 # Add authentication middleware
 app.add_middleware(AuthenticationMiddleware, allow_legacy_api_key=True)
 
-# Configuración global
-config = Config.from_env()
+# Add enhanced rate limiting middleware  
+app.add_middleware(EnhancedRateLimitMiddleware, redis_url=config.redis_url)
 memory_manager = UserMemoryManager(config.redis_url)
 db_manager = DatabaseManager(config.database_url)
 quota_manager = GeminiQuotaManager(config.redis_url)
@@ -261,10 +265,19 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
 # Include authentication routes
 app.include_router(auth_router)
 
+# Include rate limiting monitoring routes
+from api.rate_limit_monitor import router as rate_limit_router
+app.include_router(rate_limit_router)
+
 @app.on_event("startup")
 async def startup_event():
     """Inicialización al arrancar el servidor."""
     logger.info("API Server iniciando...")
+
+    # Start rate limiting monitoring
+    from api.rate_limit_monitor import start_rate_limit_monitoring
+    start_rate_limit_monitoring()
+    logger.info("Rate limiting monitoring started")
 
     # Skip database initialization in development mode
     database_mode = os.getenv("DATABASE_MODE", "normal")
