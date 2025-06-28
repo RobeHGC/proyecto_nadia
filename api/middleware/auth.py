@@ -7,6 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from auth.session_manager import SessionManager
 from auth.token_manager import TokenManager
+from auth.token_blacklist import token_blacklist
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -109,6 +110,14 @@ async def get_current_user(
     
     # Check if it's a JWT token
     if '.' in token:
+        # Check if token is blacklisted
+        if await token_blacklist.is_token_blacklisted(token):
+            raise HTTPException(
+                status_code=401,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
         user_info = await session_manager.validate_session(token)
         if not user_info:
             raise HTTPException(

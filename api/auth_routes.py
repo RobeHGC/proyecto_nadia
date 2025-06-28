@@ -10,6 +10,7 @@ from auth import OAuthManager, SessionManager, TokenManager
 from database.models import DatabaseManager
 from utils.logging_config import get_logger
 from api.middleware.auth import get_current_user, require_user
+from api.middleware.rate_limiting import AuthRateLimiter
 
 logger = get_logger(__name__)
 
@@ -17,6 +18,7 @@ logger = get_logger(__name__)
 oauth_manager = OAuthManager()
 session_manager = SessionManager()
 token_manager = TokenManager()
+rate_limiter = AuthRateLimiter()
 
 # OAuth settings
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -50,19 +52,22 @@ class RefreshRequest(BaseModel):
 
 
 @router.post("/login")
-async def oauth_login(request: LoginRequest) -> dict:
+async def oauth_login(request_data: LoginRequest, request: Request) -> dict:
     """Initiate OAuth login flow."""
     try:
+        # Check rate limit first
+        await rate_limiter.check_rate_limit(request, '/auth/login')
+        
         # Get OAuth provider
-        provider = oauth_manager.get_provider(request.provider)
+        provider = oauth_manager.get_provider(request_data.provider)
         
         # Generate state token for CSRF protection
         state = oauth_manager.generate_state_token()
         
         # Store state with redirect URL
         oauth_states[state] = {
-            'provider': request.provider,
-            'redirect_url': request.redirect_url or FRONTEND_URL
+            'provider': request_data.provider,
+            'redirect_url': request_data.redirect_url or FRONTEND_URL
         }
         
         # Get authorization URL
@@ -205,12 +210,15 @@ async def oauth_callback(
 
 
 @router.post("/refresh")
-async def refresh_token(request: RefreshRequest) -> TokenResponse:
+async def refresh_token(request_data: RefreshRequest, request: Request) -> TokenResponse:
     """Refresh access token using refresh token."""
     try:
+        # Check rate limit first
+        await rate_limiter.check_rate_limit(request, '/auth/refresh')
+        
         # Refresh the session
         session_data = await session_manager.refresh_session(
-            request.refresh_token
+            request_data.refresh_token
         )
         
         if not session_data:

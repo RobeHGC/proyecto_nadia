@@ -172,6 +172,20 @@ grep "Legacy API key used" logs/api.log
 - Maximum 5 sessions per user
 - Automatic session cleanup
 
+### Rate Limiting (NEW)
+Authentication endpoints are protected with rate limits:
+- `/auth/login`: 5 requests per 5 minutes (15 min block on violation)
+- `/auth/refresh`: 10 requests per 5 minutes (10 min block on violation)
+- `/auth/callback`: 20 requests per 5 minutes (OAuth flow support)
+
+### Token Blacklisting (NEW)
+Compromised tokens can be immediately revoked:
+```python
+# Blacklist a compromised token
+from auth.token_blacklist import token_blacklist
+await token_blacklist.revoke_compromised_token(token, "security_breach")
+```
+
 ### Audit Logging
 All authentication events are logged:
 ```sql
@@ -237,7 +251,30 @@ python scripts/test_db_connection.py
 
 # Redis connectivity
 redis-cli ping
+
+# Test authentication endpoints
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "google"}'
 ```
+
+### Migration Rollback (NEW)
+
+If authentication migration needs to be rolled back:
+
+```bash
+# DANGEROUS: This removes all authentication data!
+python scripts/rollback_auth_migration.py
+
+# Follow prompts to confirm rollback
+# System will revert to legacy API key only
+```
+
+**Rollback includes:**
+- Automatic data backup before rollback
+- Complete removal of authentication tables
+- Verification of legacy API key functionality
+- Step-by-step rollback documentation
 
 ## Production Deployment
 
