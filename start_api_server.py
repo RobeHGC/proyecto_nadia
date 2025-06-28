@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/rober/.pyenv/versions/nadia-env/bin/python
 """Simple script to start the API server with proper configuration."""
 
 import os
