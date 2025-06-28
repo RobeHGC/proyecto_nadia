@@ -1,10 +1,10 @@
 {
-  "successful_messages": 46,
-  "error_rate": 0.08,
-  "throughput": 4.6,
-  "avg_response_time": 0.05640040791553,
+  "successful_messages": 48,
+  "error_rate": 0.04,
+  "throughput": 4.8,
+  "avg_response_time": 0.056129063169161476,
   "benchmark_met": true,
-  "timestamp": "2025-06-27T13:29:43.055914",
+  "timestamp": "2025-06-27T15:00:59.617422",
   "environment": "local",
   "test_name": "message_burst_light_load"
 }
