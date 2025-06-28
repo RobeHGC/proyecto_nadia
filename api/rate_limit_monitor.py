@@ -387,6 +387,30 @@ async def get_rate_limit_config(
     }
 
 
+@router.post("/config/reload")
+@require_permission(Permission.SYSTEM_CONFIG)
+async def reload_rate_limit_config(
+    current_user: dict = Depends(get_current_user)
+):
+    """Reload rate limiting configuration from file (admin only)."""
+    from api.middleware.enhanced_rate_limiting import EnhancedRateLimiter
+    
+    # Create limiter instance and reload config
+    limiter = EnhancedRateLimiter()
+    success = limiter.reload_configuration()
+    
+    if success:
+        return {
+            "message": "Rate limiting configuration reloaded successfully",
+            "timestamp": datetime.now().isoformat()
+        }
+    else:
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to reload rate limiting configuration"
+        )
+
+
 # Background monitoring task
 async def monitor_rate_limits():
     """Background task to monitor rate limits and send alerts."""

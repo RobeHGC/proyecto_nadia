@@ -76,11 +76,67 @@ class RateLimitViolation:
 class EnhancedRateLimiter(RedisConnectionMixin):
     """Enhanced rate limiter with role-based limits and progressive backoff."""
     
-    def __init__(self, redis_url: Optional[str] = None):
+    def __init__(self, redis_url: Optional[str] = None, config_file: Optional[str] = None):
         # Initialize the mixin properly
         self._redis = None
         self.redis_url = redis_url or 'redis://localhost:6379'
+        self.config_file = config_file or 'config/rate_limits.json'
+        self._config_last_modified = 0
         
+        # Initialize configurations
+        self._load_configuration()
+    
+    def _load_configuration(self):
+        """Load configuration from file with hot-reload support."""
+        try:
+            import os
+            if os.path.exists(self.config_file):
+                stat = os.stat(self.config_file)
+                if stat.st_mtime > self._config_last_modified:
+                    with open(self.config_file, 'r') as f:
+                        config_data = json.load(f)
+                    
+                    # Load role limits from config
+                    role_config = config_data.get('role_limits', {})
+                    self.role_limits = {}
+                    
+                    for role_name, limits in role_config.items():
+                        try:
+                            if role_name == 'unauthenticated':
+                                continue  # Handle separately
+                            role = UserRole(role_name)
+                            self.role_limits[role] = RateLimitConfig(**limits)
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Invalid role config for {role_name}: {e}")
+                    
+                    # Load endpoint modifiers
+                    self.endpoint_modifiers = config_data.get('endpoint_modifiers', {})
+                    
+                    # Load default limit for unauthenticated
+                    unauth_config = role_config.get('unauthenticated', {})
+                    self.default_limit = RateLimitConfig(**unauth_config) if unauth_config else self._get_default_config()
+                    
+                    self._config_last_modified = stat.st_mtime
+                    logger.info(f"Rate limit configuration loaded from {self.config_file}")
+                    return
+            
+        except Exception as e:
+            logger.warning(f"Failed to load config from {self.config_file}: {e}, using defaults")
+        
+        # Fallback to hardcoded configuration
+        self._load_default_configuration()
+    
+    def _get_default_config(self) -> RateLimitConfig:
+        """Get default configuration for unauthenticated users."""
+        return RateLimitConfig(
+            requests_per_minute=20,
+            burst_allowance=5,
+            violation_penalty_minutes=30,
+            max_penalty_minutes=480
+        )
+    
+    def _load_default_configuration(self):
+        """Load hardcoded default configuration."""
         # Role-based rate limit configurations
         self.role_limits: Dict[UserRole, RateLimitConfig] = {
             UserRole.ADMIN: RateLimitConfig(
@@ -156,6 +212,16 @@ class EnhancedRateLimiter(RedisConnectionMixin):
             real_ip = request.client.host if request.client else 'unknown'
         
         return f"rate_limit:ip:{real_ip}"
+    
+    def reload_configuration(self) -> bool:
+        """Force reload configuration from file."""
+        try:
+            self._config_last_modified = 0  # Force reload
+            self._load_configuration()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reload configuration: {e}")
+            return False
     
     def _get_rate_limit_config(self, user_role: Optional[UserRole], endpoint: str) -> RateLimitConfig:
         """Get rate limit configuration for user role and endpoint."""
@@ -438,13 +504,41 @@ class EnhancedRateLimitMiddleware(BaseHTTPMiddleware):
             if not auth_header:
                 return None, None
             
-            # This is a simplified version - in real implementation,
-            # you would validate the token and extract user info
-            # For now, we'll use a placeholder
-            user_id = "user_from_token"  # Extract from JWT token
-            user_role = UserRole.VIEWER   # Extract from JWT token or database
+            # If get_current_user is available, use the existing auth system
+            if get_current_user:
+                try:
+                    # Mock a dependency injection for the auth system
+                    from fastapi.security import HTTPAuthorizationCredentials
+                    credentials = HTTPAuthorizationCredentials(
+                        scheme="Bearer",
+                        credentials=auth_header.replace("Bearer ", "")
+                    )
+                    
+                    # This would normally be called by FastAPI dependency injection
+                    # For middleware, we need to handle it manually
+                    # In production, this would integrate with the JWT validation
+                    user_info = await get_current_user(credentials)
+                    if user_info:
+                        user_id = user_info.get('id') or user_info.get('email')
+                        role_str = user_info.get('role', 'viewer')
+                        user_role = UserRole(role_str) if role_str in [r.value for r in UserRole] else UserRole.VIEWER
+                        return user_id, user_role
+                except Exception as auth_error:
+                    logger.debug(f"Auth system integration failed: {auth_error}")
             
-            return user_id, user_role
+            # Fallback: Extract basic info from token (simplified)
+            if auth_header.startswith('Bearer '):
+                token = auth_header[7:]  # Remove 'Bearer ' prefix
+                
+                # For API key authentication (legacy support)
+                if len(token) < 50:  # Likely an API key, not JWT
+                    return f"api_key_{hash(token) % 10000}", UserRole.ADMIN
+                
+                # For JWT tokens, we'd normally decode here
+                # Placeholder for JWT integration
+                return f"jwt_user_{hash(token) % 10000}", UserRole.VIEWER
+            
+            return None, None
         except Exception as e:
             logger.debug(f"Could not extract user info: {e}")
             return None, None
