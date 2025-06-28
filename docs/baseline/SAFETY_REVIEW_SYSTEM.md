@@ -85,9 +85,35 @@ r"(meet|see|visit).*(in person|irl|real life)"
 
 #### API Methods
 
-- **`validate(text) → bool`**: Binary validation for blocking
-- **`analyze(text) → ConstitutionAnalysis`**: Detailed analysis for human review
-- **`validate_with_detail(text) → (bool, violations)`**: Validation with violation details
+**`validate(text) → bool`** - Binary validation for blocking
+```python
+# Example usage in message pipeline
+constitution = Constitution()
+if not constitution.validate(ai_response):
+    # Block message, send to quarantine
+    quarantine_message(ai_response, "constitution_violation")
+    return get_safe_response()
+```
+
+**`analyze(text) → ConstitutionAnalysis`** - Detailed analysis for human review
+```python
+# Example usage in review queue
+analysis = constitution.analyze(ai_response)
+priority_score = calculate_priority(analysis.risk_score)
+review_data = {
+    "constitution_analysis": analysis,
+    "priority_score": priority_score,
+    "recommendation": analysis.recommendation
+}
+```
+
+**`validate_with_detail(text) → (bool, violations)`** - Validation with violation details
+```python
+# Example usage for debugging
+is_valid, violations = constitution.validate_with_detail(test_message)
+if not is_valid:
+    logger.warning(f"Constitution violations: {violations}")
+```
 
 ### 2. API Review Layer (`api/server.py`)
 
@@ -334,25 +360,45 @@ CTA_TEMPLATE_CATEGORIES = 3    // soft/medium/direct
 ### High Priority Issues
 
 **Authentication Enhancement:**
-- **Current**: Single shared API key
+- **Current**: Single shared API key (`api/server.py:31-32`)
 - **Recommended**: Multi-user role-based access control
+- **Implementation Timeline**: Q1 2025 priority
 - **Impact**: Security and audit trail improvement
 
 **Constitution System:**
-- **Current**: Static keyword/pattern lists
+- **Current**: Static keyword/pattern lists (`cognition/constitution.py:44-101`)
 - **Recommended**: Machine learning-based content classification
+- **Implementation**: Hybrid approach with ML + rule-based fallback
 - **Impact**: Improved detection accuracy and reduced false positives
 
 ### Medium Priority Issues
 
 **Dashboard UX:**
-- **Current**: Basic prompt() dialogs for user input
+- **Current**: Basic prompt() dialogs for user input (`dashboard/frontend/app.js:476, 530, 569`)
 - **Recommended**: Modal-based forms with validation
+- **Example Enhancement**:
+```javascript
+// Replace prompt() with modal dialog
+showModal({
+    title: 'Reviewer Notes',
+    fields: [{name: 'notes', type: 'textarea', required: false}],
+    onSubmit: (data) => submitReview(data.notes)
+});
+```
 - **Impact**: Better user experience and input validation
 
 **Performance Optimization:**
-- **Current**: 30-second refresh for all data
+- **Current**: 30-second refresh for all data (`dashboard/frontend/app.js:74-77`)
 - **Recommended**: WebSocket-based real-time updates
+- **Implementation Example**:
+```javascript
+// WebSocket integration for real-time updates
+const ws = new WebSocket(`ws://${this.apiBase}/ws/reviews`);
+ws.onmessage = (event) => {
+    const update = JSON.parse(event.data);
+    this.handleRealtimeUpdate(update);
+};
+```
 - **Impact**: Reduced server load and improved responsiveness
 
 ## Integration Points
