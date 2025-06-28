@@ -1,0 +1,119 @@
+{
+  "description": "Rate limiting configuration for NADIA API endpoints",
+  "version": "1.0",
+  "last_updated": "2025-06-28",
+  
+  "role_limits": {
+    "admin": {
+      "requests_per_minute": 120,
+      "burst_allowance": 20,
+      "progressive_backoff": true,
+      "violation_penalty_minutes": 5,
+      "max_penalty_minutes": 60
+    },
+    "reviewer": {
+      "requests_per_minute": 60,
+      "burst_allowance": 15,
+      "progressive_backoff": true,
+      "violation_penalty_minutes": 10,
+      "max_penalty_minutes": 120
+    },
+    "viewer": {
+      "requests_per_minute": 30,
+      "burst_allowance": 10,
+      "progressive_backoff": true,
+      "violation_penalty_minutes": 15,
+      "max_penalty_minutes": 240
+    },
+    "unauthenticated": {
+      "requests_per_minute": 20,
+      "burst_allowance": 5,
+      "progressive_backoff": true,
+      "violation_penalty_minutes": 30,
+      "max_penalty_minutes": 480
+    }
+  },
+  
+  "endpoint_modifiers": {
+    "/auth/login": 0.1,
+    "/auth/refresh": 0.2,
+    "/auth/callback": 0.3,
+    "/reviews/pending": 2.0,
+    "/reviews/*/approve": 0.5,
+    "/reviews/*/reject": 0.5,
+    "/api/analytics/*": 1.5,
+    "/api/dashboard/*": 1.5,
+    "/health": 5.0,
+    "/mcp/health": 3.0,
+    "/api/models/reload": 0.1,
+    "/quarantine/batch-process": 0.2
+  },
+  
+  "alert_thresholds": {
+    "violation_spike": {
+      "threshold": 10,
+      "window_minutes": 5,
+      "severity": "WARNING",
+      "description": "Too many rate limit violations in short time"
+    },
+    "block_rate_high": {
+      "threshold": 0.2,
+      "window_minutes": 10,
+      "severity": "CRITICAL",
+      "description": "High percentage of requests being blocked"
+    },
+    "endpoint_attack": {
+      "threshold": 50,
+      "window_minutes": 15,
+      "severity": "CRITICAL",
+      "description": "Potential attack on specific endpoint"
+    },
+    "user_excessive_violations": {
+      "threshold": 5,
+      "window_minutes": 30,
+      "severity": "WARNING",
+      "description": "Single user/IP with many violations"
+    }
+  },
+  
+  "monitoring": {
+    "enabled": true,
+    "check_interval_seconds": 60,
+    "metrics_retention_hours": 24,
+    "violation_history_days": 7,
+    "alert_retention_hours": 24
+  },
+  
+  "security_features": {
+    "progressive_backoff": {
+      "enabled": true,
+      "base_penalty_minutes": 15,
+      "max_penalty_minutes": 480,
+      "multiplier": 2
+    },
+    "ip_blocking": {
+      "enabled": true,
+      "max_violations_per_hour": 20,
+      "block_duration_minutes": 60
+    },
+    "user_blocking": {
+      "enabled": true,
+      "max_violations_per_day": 50,
+      "block_duration_minutes": 240
+    }
+  },
+  
+  "exemptions": {
+    "health_checks": [
+      "/health",
+      "/mcp/health",
+      "/api/config"
+    ],
+    "static_assets": [
+      "/docs",
+      "/openapi.json",
+      "/redoc",
+      "/favicon.ico"
+    ]
+  }
+}
