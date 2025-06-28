@@ -133,3 +133,43 @@ class TestCriticalImports:
         for module_name in new_modules:
             if module_name.startswith(('agents.', 'api.', 'database.', 'memory.', 'llms.', 'utils.', 'cognition.')):
                 sys.modules.pop(module_name, None)
+    
+    def test_jwt_dependencies(self):
+        """Test JWT dependencies - regression test for Issue #63."""
+        try:
+            from jose import jwt, JWTError
+            assert jwt is not None, "JWT module not available"
+            assert JWTError is not None, "JWTError exception not available"
+        except ImportError as e:
+            pytest.fail(f"JWT dependencies not available (Issue #63 regression): {e}")
+    
+    def test_auth_system_imports(self):
+        """Test authentication system imports - regression test for Issue #63."""
+        try:
+            from auth.token_manager import TokenManager
+            from auth import OAuthManager, SessionManager
+            
+            assert TokenManager is not None, "TokenManager class not available"
+            assert OAuthManager is not None, "OAuthManager class not available" 
+            assert SessionManager is not None, "SessionManager class not available"
+            
+            # Test that TokenManager can be instantiated (tests JWT dependencies)
+            token_manager = TokenManager()
+            assert token_manager is not None, "TokenManager cannot be instantiated"
+            
+        except ImportError as e:
+            pytest.fail(f"Auth system imports failed (Issue #63 regression): {e}")
+    
+    def test_api_server_startup_imports(self):
+        """Test API server startup import chain - regression test for Issue #63."""
+        try:
+            # This is the exact import chain that was failing in Issue #63
+            from api.auth_routes import router as auth_router
+            from auth import OAuthManager, SessionManager, TokenManager
+            from auth.token_manager import TokenManager as TM
+            
+            assert auth_router is not None, "Auth router not available"
+            assert all([OAuthManager, SessionManager, TokenManager, TM]), "Auth components not available"
+            
+        except ImportError as e:
+            pytest.fail(f"API server startup imports failed (Issue #63 regression): {e}")

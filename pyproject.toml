@@ -8,8 +8,19 @@ description = "Bot girlfriend project"
 authors = [{ name = "Tu Nombre", email = "tu@email.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-# Si el proyecto aún no tiene dependencias obligatorias, déjalo vacío:
-# dependencies = ["fastapi==0.109.0", "uvicorn==0.27.0", "openai>=1.17,<2.0", "httpx>=0.25,<1.0", "redis>=4.6", "telethon>=1.34"]
+# Dependencies required for the project:
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0", 
+    "openai>=1.17,<2.0",
+    "httpx>=0.25,<1.0",
+    "redis>=4.6",
+    "telethon>=1.34",
+    "python-jose[cryptography]>=3.3.0",
+    "python-dotenv>=1.0.0",
+    "passlib[bcrypt]>=1.7.4",
+    "cryptography>=41.0.0"
+]
 
 # ───────────────────────────────────────────────────
 # 2 Cómo construir / instalar (Setuptools)
