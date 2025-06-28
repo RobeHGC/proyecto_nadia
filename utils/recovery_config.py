@@ -26,6 +26,7 @@ class RecoveryConfig:
     # Message processing limits
     max_message_age_hours: int = 12  # Messages older than this are skipped
     max_messages_per_user: int = 100  # Max messages to recover per user per session
+    max_messages_per_user_per_session: int = 50  # Max messages to recover per user per session
     max_users_per_startup_check: int = 50  # Max users to check during startup
     max_concurrent_users: int = 5  # Max users processed concurrently
     
@@ -66,6 +67,7 @@ class RecoveryConfig:
             
             max_message_age_hours=int(os.getenv('RECOVERY_MAX_AGE_HOURS', '12')),
             max_messages_per_user=int(os.getenv('RECOVERY_MAX_PER_USER', '100')),
+            max_messages_per_user_per_session=int(os.getenv('RECOVERY_MAX_PER_USER_PER_SESSION', '50')),
             max_users_per_startup_check=int(os.getenv('RECOVERY_MAX_USERS_STARTUP', '50')),
             max_concurrent_users=int(os.getenv('RECOVERY_MAX_CONCURRENT', '5')),
             
@@ -100,6 +102,7 @@ class RecoveryConfig:
             'limits': {
                 'max_message_age_hours': self.max_message_age_hours,
                 'max_messages_per_user': self.max_messages_per_user,
+                'max_messages_per_user_per_session': self.max_messages_per_user_per_session,
                 'max_users_per_startup_check': self.max_users_per_startup_check,
                 'max_concurrent_users': self.max_concurrent_users
             },

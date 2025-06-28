@@ -295,13 +295,163 @@ monitor: ## Open monitoring dashboard
 	@echo "Prometheus: http://localhost:9090"
 
 ## ====================================================================
-## Conditional targets for CI/CD
+## MCP Workflow Integration
 ## ====================================================================
 
-ci-test: lint test ## Run CI tests (lint + unit tests)
+mcp-help: ## Show MCP workflow commands
+	@echo "$(GREEN)MCP Workflow Commands:$(NC)"
+	@echo "  make mcp-health         - Run MCP health checks"
+	@echo "  make mcp-security       - Run MCP security scan"
+	@echo "  make mcp-perf          - Run performance analysis"
+	@echo "  make mcp-debug USER=123 - Debug specific user"
+	@echo "  make mcp-workflow       - Show all workflow options"
+
+mcp-health: ## Run MCP health checks
+	@echo "$(GREEN)Running MCP health checks...$(NC)"
+	@./scripts/mcp-workflow.sh health-check
+
+mcp-security: ## Run MCP security scan
+	@echo "$(GREEN)Running MCP security scan...$(NC)"
+	@./scripts/mcp-workflow.sh security-check
+
+mcp-perf: ## Run MCP performance analysis
+	@echo "$(GREEN)Running MCP performance analysis...$(NC)"
+	@./scripts/mcp-workflow.sh perf-baseline
+
+mcp-debug: ## Debug user (usage: make mcp-debug USER=12345)
+ifdef USER
+	@echo "$(GREEN)Debugging user $(USER)...$(NC)"
+	@./scripts/mcp-workflow.sh debug-user $(USER)
+else
+	@echo "$(RED)Error: USER not specified. Usage: make mcp-debug USER=12345$(NC)"
+endif
+
+mcp-slow-api: ## Debug slow API (usage: make mcp-slow-api ENDPOINT=/api/messages)
+ifdef ENDPOINT
+	@echo "$(GREEN)Investigating slow API: $(ENDPOINT)...$(NC)"
+	@./scripts/mcp-workflow.sh slow-api $(ENDPOINT)
+else
+	@echo "$(RED)Error: ENDPOINT not specified. Usage: make mcp-slow-api ENDPOINT=/api/messages$(NC)"
+endif
+
+mcp-error: ## Find error patterns (usage: make mcp-error PATTERN="user_id.*undefined")
+ifdef PATTERN
+	@echo "$(GREEN)Searching for error pattern: $(PATTERN)...$(NC)"
+	@./scripts/mcp-workflow.sh find-error "$(PATTERN)"
+else
+	@echo "$(RED)Error: PATTERN not specified. Usage: make mcp-error PATTERN=\"user_id.*undefined\"$(NC)"
+endif
+
+mcp-workflow: ## Show MCP workflow helper
+	@./scripts/mcp-workflow.sh
+
+mcp-all: mcp-health mcp-security mcp-perf ## Run all MCP checks
+
+## ====================================================================
+## MCP Automation Management
+## ====================================================================
+
+mcp-daemon-start: ## Start MCP health daemon
+	@echo "$(GREEN)Starting MCP health daemon...$(NC)"
+	@python3 monitoring/mcp_health_daemon.py &
+	@echo "MCP health daemon started"
+
+mcp-daemon-stop: ## Stop MCP health daemon
+	@echo "$(YELLOW)Stopping MCP health daemon...$(NC)"
+	@pkill -f "mcp_health_daemon.py" || echo "No daemon running"
+
+mcp-daemon-status: ## Check MCP health daemon status
+	@echo "$(GREEN)MCP Health Daemon Status:$(NC)"
+	@pgrep -f "mcp_health_daemon.py" > /dev/null && echo "✓ Daemon is running" || echo "✗ Daemon is not running"
+	@echo ""
+	@echo "$(GREEN)Recent health logs:$(NC)"
+	@tail -n 10 logs/mcp-health-daemon.log 2>/dev/null || echo "No logs found"
+
+mcp-install-systemd: ## Install systemd service for MCP daemon
+	@echo "$(GREEN)Installing MCP health daemon systemd service...$(NC)"
+	@sudo cp scripts/systemd/mcp-health-daemon.service /etc/systemd/system/
+	@sudo systemctl daemon-reload
+	@sudo systemctl enable mcp-health-daemon
+	@echo "Service installed. Use 'sudo systemctl start mcp-health-daemon' to start"
+
+mcp-install-cron: ## Install cron jobs for MCP health checks
+	@echo "$(GREEN)Installing MCP health check cron jobs...$(NC)"
+	@./scripts/cron/mcp-health-cron.sh install-cron
+
+mcp-uninstall-cron: ## Uninstall MCP health check cron jobs
+	@echo "$(YELLOW)Removing MCP health check cron jobs...$(NC)"
+	@./scripts/cron/mcp-health-cron.sh uninstall-cron
+
+mcp-cron-status: ## Check MCP cron job status
+	@echo "$(GREEN)MCP Cron Status:$(NC)"
+	@./scripts/cron/mcp-health-cron.sh status
+
+mcp-setup-alerts: ## Setup MCP alert notifications (interactive)
+	@echo "$(GREEN)Setting up MCP alert notifications...$(NC)"
+	@./scripts/setup-mcp-alerts.sh
+
+mcp-test-alerts: ## Test MCP alert channels
+	@echo "$(GREEN)Testing MCP alert channels...$(NC)"
+	@python3 monitoring/mcp_alert_manager.py
+
+mcp-send-test-alert: ## Send test alert through all channels
+	@echo "$(GREEN)Sending test alert...$(NC)"
+	@python3 -c "import asyncio; from monitoring.mcp_alert_manager import send_mcp_alert; asyncio.run(send_mcp_alert('manual_test', 'Test alert from Makefile', 'INFO'))"
+
+mcp-alert-stats: ## Show MCP alert statistics
+	@echo "$(GREEN)MCP Alert Statistics:$(NC)"
+	@python3 -c "import asyncio; from monitoring.mcp_alert_manager import MCPAlertManager; async def show(): m = MCPAlertManager(); stats = await m.get_alert_stats(); print('Total alerts:', stats.get('total_alerts', 0)); print('By severity:', stats.get('alerts_by_severity', {})); print('Channels enabled:', stats.get('channels_enabled', 0)); asyncio.run(show())"
+
+## ====================================================================
+## MCP CI/CD Integration
+## ====================================================================
+
+mcp-ci-security: ## Run MCP security checks for CI
+	@echo "$(GREEN)Running MCP security checks for CI...$(NC)"
+	@./scripts/mcp-workflow.sh security-check || { echo "$(RED)Security check failed$(NC)"; exit 1; }
+
+mcp-ci-health: ## Run MCP health checks for CI
+	@echo "$(GREEN)Running MCP health checks for CI...$(NC)"
+	@./scripts/mcp-workflow.sh health-check || { echo "$(RED)Health check failed$(NC)"; exit 1; }
+
+mcp-ci-performance: ## Run MCP performance baseline for CI
+	@echo "$(GREEN)Creating MCP performance baseline for CI...$(NC)"
+	@./scripts/mcp-workflow.sh perf-baseline
+
+mcp-ci-full: mcp-ci-security mcp-ci-health mcp-ci-performance ## Run full MCP CI validation
+
+mcp-deployment-validate: ## Validate deployment with MCP
+	@echo "$(GREEN)Validating deployment with MCP...$(NC)"
+	@./scripts/deployment-health-check.sh ${ENV:-staging} ${TIMEOUT:-300} ${API_URL:-http://localhost:8000}
+
+mcp-pre-commit: ## Run MCP pre-commit checks
+	@echo "$(GREEN)Running MCP pre-commit checks...$(NC)"
+	@./scripts/mcp-workflow.sh security-check
+	@if git diff --cached --name-only | xargs grep -l "api_key\|secret\|password" 2>/dev/null; then \
+		echo "$(RED)Potential secrets detected in staged files$(NC)"; \
+		exit 1; \
+	fi
+
+mcp-setup-git-hooks: ## Install MCP git hooks
+	@echo "$(GREEN)Installing MCP git hooks...$(NC)"
+	@./scripts/setup-git-hooks.sh
+
+## ====================================================================
+## CI/CD Pipeline Commands
+## ====================================================================
+
+ci-security-gate: mcp-ci-security ## Security gate for CI pipeline
+	@echo "$(GREEN)✅ Security gate passed$(NC)"
+
+ci-test: lint test mcp-ci-health ## Run CI tests (lint + unit tests + health)
 
 ci-build: prod-build ## Build for CI
 
 ci-deploy: ## Deploy in CI environment
 	@echo "$(GREEN)CI Deployment...$(NC)"
 	@./scripts/deploy.sh --environment production --skip-backup
+
+ci-validate: mcp-deployment-validate ## Validate CI deployment
+	@echo "$(GREEN)✅ CI deployment validation completed$(NC)"
+
+ci-full-pipeline: ci-security-gate ci-test ci-build ci-deploy ci-validate ## Run complete CI pipeline

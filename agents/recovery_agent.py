@@ -58,6 +58,7 @@ class RecoveryAgent(RedisConnectionMixin):
         self.processing_semaphore = asyncio.Semaphore(self.config.max_concurrent_users)
         self.last_telegram_request = 0.0
         self.telegram_rate_limiter = asyncio.Semaphore(self.config.telegram_rate_limit)
+        self.min_request_interval = 1.0 / self.config.telegram_rate_limit  # Minimum interval between requests
 
         logger.info(f"Recovery Agent initialized with config: {self.config}")
 

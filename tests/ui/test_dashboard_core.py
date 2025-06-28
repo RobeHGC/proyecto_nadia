@@ -14,6 +14,11 @@ from .page_objects.dashboard_page import DashboardPage
 class TestDashboardCore:
     """Test suite for core dashboard functionality."""
     
+    def teardown_method(self):
+        """Ensure test isolation and cleanup."""
+        # Browser state cleanup handled by MCP server
+        # Dashboard state cleanup handled by fixtures
+        pass
     @pytest.mark.asyncio
     async def test_dashboard_loads_successfully(self, browser_manager, browser_config):
         """Test that the dashboard loads without errors."""
@@ -23,7 +28,7 @@ class TestDashboardCore:
         success = await dashboard.navigate()
         assert success, "Failed to navigate to dashboard"
         
-        # Wait for dashboard to fully load
+        # Wait for dashboard to fully load with proper condition checking
         loaded = await dashboard.wait_for_dashboard_load()
         assert loaded, "Dashboard failed to load completely"
         
