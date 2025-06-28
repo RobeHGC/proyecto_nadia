@@ -11,11 +11,22 @@
 
 This document provides comprehensive baseline documentation for the NADIA HITL infrastructure and support systems, covering the monitoring, utilities, and automation components that provide the operational foundation for the platform. These systems enable production-grade operations with enterprise-level monitoring, shared services architecture, and comprehensive automation.
 
-**Key Metrics**:
-- **Total Infrastructure Code**: 7,709 lines across 38 files
-- **Monitoring System**: 4-tier architecture with multi-channel alerting
-- **Utility Framework**: 13 shared services with 70% API cost reduction
-- **Automation Coverage**: Full development-to-production lifecycle
+## Quick Reference
+
+| Component | Key Metric | Value | Description |
+|-----------|------------|-------|-------------|
+| **Monitoring** | Health Check Time | <3s | 4-tier system with 95% cache hit rate |
+| **Utilities** | API Cost Reduction | 70% | Through intelligent batching and optimization |
+| **Automation** | Deployment Time | <10min | Full lifecycle with safety checks |
+| **Infrastructure** | Total Code | 7,709 lines | Across 38 files, 3 major components |
+| **Alert System** | Response Time | <500ms | Multi-channel with rate limiting |
+| **Cache Performance** | Hit Rate | 95% | Redis-based with intelligent warming |
+
+### Performance Highlights
+- **70% API cost reduction** through intelligent message batching and optimization
+- **Sub-3-second health checks** with minimal resource overhead (<50MB memory)
+- **95% cache hit rate** for protocol status and entity resolution
+- **Production-ready monitoring** with 4-tier architecture and multi-channel alerting
 
 ---
 
@@ -79,6 +90,32 @@ class HealthChecker:
     async def check_message_queues()                 # Queue monitoring (WAL: 100, Review: 50)
     async def check_conversation_memory()            # Memory integrity validation
     async def check_system_resources()               # Resource thresholds (CPU: 80%, RAM: 85%, Disk: 90%)
+```
+
+**Practical Usage Example**:
+```python
+# Standalone health check execution
+from monitoring.health_check import HealthChecker
+
+async def main():
+    checker = HealthChecker()
+    
+    # Quick overall health check
+    is_healthy = await checker.check_all()
+    print(f"System Health: {'✅ HEALTHY' if is_healthy else '❌ UNHEALTHY'}")
+    
+    # Detailed component checks
+    redis_ok = await checker.check_redis_connection()
+    queues_ok = await checker.check_message_queues()
+    resources_ok = await checker.check_system_resources()
+    
+    print(f"Redis: {'✅' if redis_ok else '❌'}")
+    print(f"Queues: {'✅' if queues_ok else '❌'}")
+    print(f"Resources: {'✅' if resources_ok else '❌'}")
+
+# Integration with alerting
+if not await checker.check_all():
+    await alert_manager.send_alert("System health check failed")
 ```
 
 #### Performance Characteristics
@@ -352,6 +389,30 @@ class UserActivityTracker:
 - **Configurable logging** with adjustable levels and custom messages
 - **Default values** enabling graceful failure with return defaults
 
+**Usage Examples**:
+```python
+from utils.error_handling import handle_errors
+
+# Basic usage with default empty dict return
+@handle_errors(default_return={})
+async def get_user_data(user_id: str) -> dict:
+    # Database operation that might fail
+    return await database.fetch_user(user_id)
+
+# Custom default return value
+@handle_errors(default_return=False, log_level="WARNING")
+def validate_input(data: str) -> bool:
+    if not data or len(data) < 5:
+        raise ValueError("Input too short")
+    return True
+
+# API endpoint with graceful degradation
+@handle_errors(default_return={"status": "error", "data": None})
+async def api_get_metrics() -> dict:
+    metrics = await expensive_calculation()
+    return {"status": "success", "data": metrics}
+```
+
 #### Logging Configuration (`utils/logging_config.py` - 44 lines)
 **Purpose**: Centralized logging setup with third-party noise reduction
 
@@ -382,10 +443,40 @@ class UserActivityTracker:
 
 **Usage Pattern**:
 ```python
-class MyClass(RedisConnectionMixin):
-    async def my_method(self):
+from utils.redis_mixin import RedisConnectionMixin
+
+class MyComponent(RedisConnectionMixin):
+    async def process_message(self, user_id: str, message: str):
+        # Get Redis connection (lazy loading)
         r = await self._get_redis()
-        # Redis operations
+        
+        # Store message in user queue
+        await r.lpush(f"user:{user_id}:messages", message)
+        
+        # Set expiration for cleanup
+        await r.expire(f"user:{user_id}:messages", 86400)  # 24 hours
+        
+        # Check queue size
+        queue_size = await r.llen(f"user:{user_id}:messages")
+        return queue_size
+
+    async def cleanup(self):
+        # Proper connection cleanup
+        await self._close_redis()
+```
+
+**Real-world Integration Example**:
+```python
+# Used across multiple system components
+class ProtocolManager(RedisConnectionMixin):
+    async def is_protocol_active(self, user_id: str) -> bool:
+        r = await self._get_redis()
+        return await r.exists(f"protocol:{user_id}")
+
+class UserActivityTracker(RedisConnectionMixin):
+    async def track_typing(self, user_id: str):
+        r = await self._get_redis()
+        await r.setex(f"typing:{user_id}", 30, "active")
 ```
 
 #### Recovery Configuration (`utils/recovery_config.py` - 234 lines)
