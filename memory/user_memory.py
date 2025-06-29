@@ -2,8 +2,9 @@
 """Gestor de memoria para almacenar contexto de usuarios."""
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
+import os
 
 from utils.config import Config
 from utils.constants import MONTH_IN_SECONDS, RECENT_MESSAGES_COUNT, TEMPORAL_SUMMARY_COUNT
@@ -11,13 +12,21 @@ from utils.datetime_helpers import now_iso, time_ago_text
 from utils.error_handling import handle_errors
 from utils.redis_mixin import RedisConnectionMixin
 
+# Import hybrid memory manager conditionally
+try:
+    from memory.hybrid_memory_manager import HybridMemoryManager, MemoryItem, MemoryTier
+    HYBRID_MEMORY_AVAILABLE = True
+except ImportError:
+    HYBRID_MEMORY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
 class UserMemoryManager(RedisConnectionMixin):
     """Gestiona la memoria y contexto de cada usuario."""
 
-    def __init__(self, redis_url: str = None, max_history_length: int = 50, max_context_size_kb: int = 100):
+    def __init__(self, redis_url: str = None, max_history_length: int = 50, max_context_size_kb: int = 100, 
+                 enable_hybrid_memory: bool = None):
         """Inicializa el gestor con conexión a Redis y límites de memoria."""
         config = Config.from_env() if not redis_url else None
         super().__init__()
@@ -26,12 +35,32 @@ class UserMemoryManager(RedisConnectionMixin):
         # Memory limits configuration
         self.max_history_length = max_history_length
         self.max_context_size_kb = max_context_size_kb
+        
+        # Hybrid memory configuration
+        self.enable_hybrid_memory = enable_hybrid_memory if enable_hybrid_memory is not None else HYBRID_MEMORY_AVAILABLE
+        self.hybrid_manager: Optional[HybridMemoryManager] = None
+        
+        # Initialize hybrid memory manager if enabled
+        if self.enable_hybrid_memory and HYBRID_MEMORY_AVAILABLE:
+            database_url = os.getenv('DATABASE_URL')
+            mongodb_uri = os.getenv('MONGODB_URI')
+            if database_url:
+                self.hybrid_manager = HybridMemoryManager(database_url, mongodb_uri)
+                logger.info("Hybrid memory manager initialized")
+            else:
+                logger.warning("DATABASE_URL not available, hybrid memory disabled")
+                self.enable_hybrid_memory = False
 
     async def close(self):
-        """Cierra la conexión a Redis limpiamente."""
+        """Cierra la conexión a Redis y hybrid manager limpiamente."""
         if self._redis:
             await self._redis.aclose()
             self._redis = None
+        
+        # Close hybrid memory manager
+        if self.hybrid_manager:
+            await self.hybrid_manager.close()
+            self.hybrid_manager = None
 
     async def get_user_context(self, user_id: str) -> Dict[str, Any]:
         """Obtiene el contexto almacenado de un usuario."""
@@ -312,6 +341,10 @@ class UserMemoryManager(RedisConnectionMixin):
                 ex=86400 * 7  # Expirar en 7 días
             )
             
+            # HYBRID MEMORY HOOK: Store in hybrid system if enabled
+            if self.enable_hybrid_memory and self.hybrid_manager:
+                await self._store_message_in_hybrid_system(user_id, message)
+            
         except Exception as e:
             logger.error(f"Error agregando al historial para {user_id}: {e}")
 
@@ -529,3 +562,153 @@ class UserMemoryManager(RedisConnectionMixin):
                 return f"{days} days ago"
             else:
                 return "Over a week ago"
+    
+    # === HYBRID MEMORY HOOKS ===
+    
+    async def _store_message_in_hybrid_system(self, user_id: str, message: Dict[str, Any]) -> None:
+        """Store message in hybrid memory system."""
+        try:
+            if not self.hybrid_manager:
+                return
+            
+            # Initialize hybrid manager if needed
+            if not hasattr(self.hybrid_manager, 'db_pool') or not self.hybrid_manager.db_pool:
+                await self.hybrid_manager.initialize()
+                
+            # Determine message importance based on content and role
+            importance = self._calculate_message_importance(message)
+            
+            # Create memory item
+            memory_item = MemoryItem(
+                user_id=user_id,
+                content=message.get('content', ''),
+                timestamp=datetime.now(),
+                memory_type='conversation',
+                importance=importance,
+                tier=MemoryTier.HOT,  # Start in hot tier
+                metadata={
+                    'role': message.get('role', ''),
+                    'timestamp': message.get('timestamp', ''),
+                    'source': 'conversation_history'
+                }
+            )
+            
+            # Store in hybrid system
+            await self.hybrid_manager.store_memory(memory_item)
+            
+        except Exception as e:
+            logger.error(f"Error storing message in hybrid system for {user_id}: {e}")
+    
+    def _calculate_message_importance(self, message: Dict[str, Any]) -> float:
+        """Calculate importance score for a message (0.0 to 1.0)."""
+        try:
+            content = message.get('content', '').lower()
+            role = message.get('role', '')
+            
+            # Base importance
+            importance = 0.3
+            
+            # Role-based importance
+            if role == 'user':
+                importance += 0.2  # User messages more important
+            elif role == 'assistant':
+                importance += 0.1
+            
+            # Content-based importance
+            important_keywords = [
+                'name', 'work', 'job', 'family', 'hobby', 'like', 'love', 
+                'important', 'remember', 'prefer', 'favorite', 'hate', 'dislike'
+            ]
+            
+            for keyword in important_keywords:
+                if keyword in content:
+                    importance += 0.1
+                    if importance >= 1.0:
+                        break
+            
+            # Length-based importance (longer messages often more important)
+            if len(content) > 100:
+                importance += 0.05
+            if len(content) > 200:
+                importance += 0.05
+            
+            # Question-based importance
+            if '?' in content:
+                importance += 0.1
+            
+            return min(importance, 1.0)
+            
+        except Exception as e:
+            logger.error(f"Error calculating message importance: {e}")
+            return 0.5  # Default importance
+    
+    async def get_enhanced_context_with_rag(self, user_id: str, query: Optional[str] = None) -> Dict[str, Any]:
+        """Get enhanced context using hybrid memory system with RAG."""
+        try:
+            # Get standard context
+            standard_context = await self.get_conversation_with_summary(user_id)
+            
+            if not self.enable_hybrid_memory or not self.hybrid_manager:
+                return standard_context
+            
+            # Initialize hybrid manager if needed
+            if not hasattr(self.hybrid_manager, 'db_pool') or not self.hybrid_manager.db_pool:
+                await self.hybrid_manager.initialize()
+            
+            # Retrieve relevant memories using hybrid system
+            relevant_memories = await self.hybrid_manager.retrieve_memories(
+                user_id=user_id,
+                query=query,
+                memory_types=['conversation', 'preference', 'factual'],
+                limit=5,
+                min_importance=0.4
+            )
+            
+            # Format memories for context
+            memory_context = []
+            for memory in relevant_memories:
+                memory_context.append({
+                    'content': memory.content,
+                    'type': memory.memory_type,
+                    'importance': memory.importance,
+                    'timestamp': memory.timestamp.isoformat(),
+                    'tier': memory.tier.value
+                })
+            
+            # Enhanced context with hybrid memories
+            enhanced_context = {
+                **standard_context,
+                'hybrid_memories': memory_context,
+                'memory_system_enabled': True,
+                'total_hybrid_memories': len(memory_context)
+            }
+            
+            return enhanced_context
+            
+        except Exception as e:
+            logger.error(f"Error getting enhanced context for {user_id}: {e}")
+            # Fallback to standard context
+            return await self.get_conversation_with_summary(user_id)
+    
+    async def consolidate_user_memories(self, user_id: str) -> Dict[str, Any]:
+        """Trigger memory consolidation for a specific user."""
+        try:
+            if not self.enable_hybrid_memory or not self.hybrid_manager:
+                return {"status": "hybrid_memory_disabled"}
+            
+            # Initialize hybrid manager if needed
+            if not hasattr(self.hybrid_manager, 'db_pool') or not self.hybrid_manager.db_pool:
+                await self.hybrid_manager.initialize()
+            
+            # Perform memory consolidation
+            consolidation_stats = await self.hybrid_manager.consolidate_memories(user_id)
+            
+            return {
+                "status": "completed",
+                "user_id": user_id,
+                **consolidation_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Error consolidating memories for {user_id}: {e}")
+            return {"status": "error", "error": str(e)}

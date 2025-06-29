@@ -492,16 +492,58 @@ class EnhancedRateLimitMiddleware(BaseHTTPMiddleware):
         try:
             # Try to get user from Authorization header
             auth_header = request.headers.get('Authorization')
-            if not auth_header:
+            if not auth_header or not auth_header.startswith('Bearer '):
                 return None, None
             
-            # This is a simplified version - in real implementation,
-            # you would validate the token and extract user info
-            # For now, we'll use a placeholder
-            user_id = "user_from_token"  # Extract from JWT token
-            user_role = UserRole.VIEWER   # Extract from JWT token or database
+            # Extract token from Authorization header
+            token = auth_header.split(' ')[1]
             
-            return user_id, user_role
+            # Use the existing authentication middleware to validate and extract user info
+            if get_current_user:
+                try:
+                    # Create a mock request-like object for get_current_user
+                    from fastapi import HTTPException
+                    from fastapi.security import HTTPBearer
+                    
+                    # Import JWT functionality
+                    import jwt
+                    import os
+                    
+                    # Get JWT secret from environment
+                    jwt_secret = os.getenv('JWT_SECRET_KEY')
+                    if not jwt_secret:
+                        logger.warning("JWT_SECRET_KEY not set, using fallback for rate limiting")
+                        return None, None
+                    
+                    # Decode JWT token
+                    payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+                    user_email = payload.get('sub')
+                    user_role_str = payload.get('role', 'viewer')
+                    
+                    if not user_email:
+                        return None, None
+                    
+                    # Convert role string to UserRole enum
+                    try:
+                        user_role = UserRole(user_role_str.lower())
+                    except ValueError:
+                        user_role = UserRole.VIEWER  # Default fallback
+                    
+                    # Use email as user_id for rate limiting
+                    return user_email, user_role
+                    
+                except jwt.ExpiredSignatureError:
+                    logger.debug("JWT token expired")
+                    return None, None
+                except jwt.InvalidTokenError:
+                    logger.debug("Invalid JWT token")
+                    return None, None
+                except Exception as e:
+                    logger.debug(f"Error decoding JWT: {e}")
+                    return None, None
+            
+            return None, None
+            
         except Exception as e:
             logger.debug(f"Could not extract user info: {e}")
             return None, None

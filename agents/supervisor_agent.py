@@ -17,6 +17,8 @@ from llms.stable_prefix_manager import StablePrefixManager
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
 
+logger = logging.getLogger(__name__)
+
 # RAG imports (with fallback if not available)
 try:
     from knowledge.rag_manager import RAGManager, get_rag_manager
@@ -25,7 +27,14 @@ except ImportError:
     logger.warning("RAG system not available - continuing without knowledge enhancement")
     RAG_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+# Hybrid memory and agent configuration imports
+try:
+    from agents.memory_strategies import AgentConfigurationManager, AgentType, get_agent_config_manager
+    from memory.hybrid_memory_manager import HybridMemoryManager
+    HYBRID_MEMORY_AVAILABLE = True
+except ImportError:
+    logger.warning("Hybrid memory system not available - using basic memory only")
+    HYBRID_MEMORY_AVAILABLE = False
 
 
 @dataclass
@@ -100,8 +109,23 @@ class SupervisorAgent:
         self.rag_manager = None
         self._rag_initialized = False
         if RAG_AVAILABLE:
-            # RAG will be initialized on first use to avoid blocking startup
-            logger.info("RAG system available - will initialize on first use")
+            # Enable RAG by default with local embeddings
+            logger.info("RAG system available - will initialize with local embeddings on first use")
+            # Force use of local embeddings for cost savings
+            self._use_local_embeddings = True
+        
+        # Initialize hybrid memory and agent configuration system
+        self.agent_config_manager = None
+        self._hybrid_memory_enabled = False
+        if HYBRID_MEMORY_AVAILABLE:
+            try:
+                # Initialize configuration manager (will be async initialized on first use)
+                self.agent_config_manager = None  # Will be initialized in _initialize_hybrid_memory
+                self._hybrid_memory_enabled = True
+                logger.info("Hybrid memory system available - will initialize on first use")
+            except Exception as e:
+                logger.warning(f"Failed to enable hybrid memory system: {e}")
+                self._hybrid_memory_enabled = False
     
     def _load_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
         """Carga la persona de LLM1 desde archivo externo."""
@@ -168,15 +192,45 @@ class SupervisorAgent:
         logger.info("LLM1 persona reloaded successfully")
     
     async def _initialize_rag(self):
-        """Initialize RAG system on first use."""
+        """Initialize RAG system on first use with local embeddings."""
         if RAG_AVAILABLE and not self._rag_initialized:
             try:
-                self.rag_manager = await get_rag_manager()
+                # First try local file-based RAG (no MongoDB dependency)
+                from knowledge.local_rag_manager import get_local_rag_manager as get_local_file_rag
+                self.rag_manager = await get_local_file_rag()
                 self._rag_initialized = True
-                logger.info("RAG system initialized successfully")
+                logger.info("RAG system initialized successfully with local file-based RAG")
             except Exception as e:
-                logger.warning(f"Failed to initialize RAG system: {e}")
-                self.rag_manager = None
+                logger.warning(f"Failed to initialize local file RAG, trying MongoDB RAG: {e}")
+                try:
+                    # Fallback to MongoDB RAG
+                    from knowledge.rag_manager import get_local_rag_manager
+                    self.rag_manager = await get_local_rag_manager()
+                    self._rag_initialized = True
+                    logger.info("RAG system initialized successfully with MongoDB RAG")
+                except Exception as e2:
+                    logger.warning(f"Failed to initialize any RAG system: {e2}")
+                    self.rag_manager = None
+    
+    async def _initialize_hybrid_memory(self):
+        """Initialize hybrid memory and agent configuration systems."""
+        if HYBRID_MEMORY_AVAILABLE and self._hybrid_memory_enabled and self.agent_config_manager is None:
+            try:
+                # Initialize agent configuration manager
+                database_url = os.getenv('DATABASE_URL')
+                self.agent_config_manager = await get_agent_config_manager(database_url)
+                
+                # Get supervisor-specific memory configuration
+                supervisor_config = await self.agent_config_manager.get_agent_config(AgentType.SUPERVISOR)
+                
+                logger.info(f"Hybrid memory system initialized for supervisor agent")
+                logger.info(f"Memory strategy: {supervisor_config.strategy.value}")
+                logger.info(f"Context window: {supervisor_config.context_window_tokens} tokens")
+                logger.info(f"Retrieval K: {supervisor_config.retrieval_k}")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize hybrid memory system: {e}")
+                self._hybrid_memory_enabled = False
     
     def set_db_manager(self, db_manager):
         """Sets the database manager for accessing user information."""
@@ -191,8 +245,22 @@ class SupervisorAgent:
         import time
         start_time = time.time()
 
-        # Obtener contexto del usuario
-        context = await self.memory.get_user_context(user_id)
+        # Initialize systems on first use
+        await self._initialize_rag()
+        await self._initialize_hybrid_memory()
+
+        # HYBRID MEMORY INTEGRATION: Get enhanced context with RAG and hybrid memories
+        if self._hybrid_memory_enabled and hasattr(self.memory, 'get_enhanced_context_with_rag'):
+            try:
+                context = await self.memory.get_enhanced_context_with_rag(user_id, message)
+                logger.debug(f"Using enhanced context for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to get enhanced context, falling back to standard: {e}")
+                context = await self.memory.get_user_context(user_id)
+        else:
+            # Fallback to standard context
+            context = await self.memory.get_user_context(user_id)
+        
         # Agregar user_id al contexto para usarlo en el prompt
         context['user_id'] = user_id
         
@@ -203,8 +271,8 @@ class SupervisorAgent:
             "timestamp": datetime.now().isoformat()
         })
 
-        # Paso 1: LLM-1 - Generación creativa
-        llm1_response = await self._generate_creative_response(message, context)
+        # Paso 1: LLM-1 - Generación creativa con memoria híbrida
+        llm1_response = await self._generate_creative_response_with_memory(message, context, user_id)
 
         # Paso 2: LLM-2 - Refinamiento y formato de burbujas
         llm2_bubbles = await self._refine_and_format_bubbles(llm1_response, message, context)
@@ -245,18 +313,29 @@ class SupervisorAgent:
             conversation_context=context
         )
 
-        # RAG Learning: Store interaction for future knowledge enhancement
+        # HYBRID MEMORY + RAG: Store interaction in both systems
+        final_response = " ".join(llm2_bubbles)
+        
+        # Store in RAG system
         if self.rag_manager and self._rag_initialized:
             try:
-                # Store the interaction for learning (async in background)
-                final_response = " ".join(llm2_bubbles)
-                await self.rag_manager.store_user_interaction(
-                    user_id=user_id,
-                    user_message=message,
-                    ai_response=final_response,
-                    conversation_id=f"review_{review_item.id}"
-                )
-                logger.debug(f"Stored RAG interaction for user {user_id}")
+                # Enhanced RAG storage with hybrid memory integration
+                if hasattr(self.rag_manager, 'store_interaction_in_hybrid_memory'):
+                    await self.rag_manager.store_interaction_in_hybrid_memory(
+                        user_id=user_id,
+                        user_message=message,
+                        ai_response=final_response,
+                        conversation_id=f"review_{review_item.id}"
+                    )
+                else:
+                    # Fallback to standard RAG storage
+                    await self.rag_manager.store_user_interaction(
+                        user_id=user_id,
+                        user_message=message,
+                        ai_response=final_response,
+                        conversation_id=f"review_{review_item.id}"
+                    )
+                logger.debug(f"Stored interaction in RAG system for user {user_id}")
             except Exception as e:
                 logger.warning(f"Failed to store RAG interaction: {e}")
 
@@ -349,6 +428,42 @@ class SupervisorAgent:
             self.llm_router.record_usage_cost("llm1", cost)
             
         return response
+    
+    async def _generate_creative_response_with_memory(self, message: str, context: Dict[str, Any], user_id: str) -> str:
+        """LLM-1: Genera respuesta creativa con memoria híbrida e información contextual mejorada."""
+        
+        # Build enhanced prompt with hybrid memory context
+        prompt = await self._build_creative_prompt_with_memory(message, context, user_id)
+        
+        # Log Gemini prompt tokens for monitoring
+        total_prompt_text = " ".join([msg.get('content', '') for msg in prompt])
+        estimated_tokens = len(total_prompt_text.split())
+        self.logger.info(f"Gemini prompt tokens (hybrid): ~{estimated_tokens}")
+        
+        # Use dynamic router if available, otherwise fallback to direct LLM1
+        if self.llm_router:
+            llm1_client = self.llm_router.select_llm1()
+        else:
+            llm1_client = self.llm1
+        
+        # Get agent-specific configuration for temperature and other params
+        temperature = 0.8  # Default
+        if self._hybrid_memory_enabled and self.agent_config_manager:
+            try:
+                supervisor_config = await self.agent_config_manager.get_agent_config(AgentType.SUPERVISOR)
+                temperature = supervisor_config.temperature
+                self.logger.debug(f"Using configured temperature: {temperature}")
+            except Exception as e:
+                self.logger.warning(f"Failed to get supervisor config, using default temperature: {e}")
+            
+        response = await llm1_client.generate_response(prompt, temperature=temperature)
+        
+        # Record usage cost if router is available
+        if self.llm_router and hasattr(llm1_client, 'get_last_cost'):
+            cost = llm1_client.get_last_cost()
+            self.llm_router.record_usage_cost("llm1", cost)
+            
+        return response
 
     async def _refine_and_format_bubbles(self, raw_response: str, original_message: str,
                                        context: Dict[str, Any]) -> List[str]:
@@ -417,7 +532,7 @@ class SupervisorAgent:
                     conversation_context=context
                 )
                 
-                if rag_response.success and rag_response.context_used.confidence_score > 0.3:
+                if rag_response.success and rag_response.context_used.confidence_score > 0.05:
                     rag_enhanced_message = rag_response.enhanced_prompt
                     logger.info(f"RAG enhanced prompt with confidence {rag_response.context_used.confidence_score:.2f}")
                     
@@ -511,6 +626,179 @@ class SupervisorAgent:
             "content": rag_enhanced_message
         })
 
+        return messages
+    
+    async def _build_creative_prompt_with_memory(self, message: str, context: Dict[str, Any], user_id: str) -> list:
+        """Builds enhanced prompt for LLM-1 with hybrid memory integration."""
+        
+        # Get agent configuration for context window and retrieval parameters
+        retrieval_k = 5  # Default
+        context_window_tokens = 8000  # Default
+        
+        if self._hybrid_memory_enabled and self.agent_config_manager:
+            try:
+                supervisor_config = await self.agent_config_manager.get_agent_config(AgentType.SUPERVISOR)
+                retrieval_k = supervisor_config.retrieval_k
+                context_window_tokens = supervisor_config.context_window_tokens
+                
+                # Get memory-aware prompt template if available
+                base_persona = await self.agent_config_manager.get_prompt_template(
+                    "nadia_base_persona", 
+                    {
+                        "personality_traits": "warm, curious, empathetic, medically-minded",
+                        "context_summary": context.get('temporal_summary', '')
+                    }
+                )
+                if base_persona:
+                    nadia_persona = base_persona
+                else:
+                    nadia_persona = self._llm1_persona
+            except Exception as e:
+                logger.warning(f"Failed to get enhanced persona template: {e}")
+                nadia_persona = self._llm1_persona
+                
+        else:
+            nadia_persona = self._llm1_persona
+        
+        # Enhanced RAG with hybrid memory context
+        enhanced_message = message
+        memory_context = ""
+        
+        if self.rag_manager:
+            try:
+                # Use enhanced RAG that includes hybrid memories
+                rag_response = await self.rag_manager.enhance_prompt_with_context(
+                    user_message=message,
+                    user_id=user_id,
+                    conversation_context=context
+                )
+                
+                if rag_response.success and rag_response.context_used.confidence_score > 0.05:
+                    enhanced_message = rag_response.enhanced_prompt
+                    
+                    # Extract hybrid memory context if available
+                    if hasattr(rag_response.context_used, 'metadata') and 'hybrid_memories' in rag_response.context_used.metadata:
+                        hybrid_memories = rag_response.context_used.metadata['hybrid_memories']
+                        if hybrid_memories:
+                            memory_context = "\nRelevant Memories:\n"
+                            for memory in hybrid_memories[:3]:  # Limit to top 3
+                                importance_star = "⭐" if memory['importance'] > 0.7 else ""
+                                memory_context += f"- {importance_star}[{memory['tier']}] {memory['content'][:100]}...\n"
+                    
+                    logger.info(f"Enhanced RAG with hybrid memory, confidence: {rag_response.context_used.confidence_score:.2f}")
+                    context['rag_context'] = rag_response.context_used
+                    
+            except Exception as e:
+                logger.warning(f"Enhanced RAG failed, using fallback: {e}")
+        
+        # Get enhanced conversation context
+        conversation_data = {"recent_messages": [], "temporal_summary": ""}
+        if hasattr(context, 'get') and context.get('memory_system_enabled'):
+            # Context already includes hybrid memories
+            conversation_data = {
+                "recent_messages": context.get('recent_messages', []),
+                "temporal_summary": context.get('temporal_summary', ''),
+                "total_hybrid_memories": context.get('total_hybrid_memories', 0)
+            }
+        else:
+            # Fallback to standard conversation context
+            if hasattr(self, 'memory') and user_id:
+                conversation_data = await self.memory.get_conversation_with_summary(user_id, recent_count=10)
+        
+        # Build enhanced prompt messages
+        messages = [
+            {
+                "role": "system",
+                "content": nadia_persona
+            }
+        ]
+        
+        # Add hybrid memory context if available
+        if memory_context:
+            messages.append({
+                "role": "system",
+                "content": f"Context from your persistent memory:{memory_context}"
+            })
+        
+        # Add temporal summary
+        if conversation_data.get('temporal_summary'):
+            temporal_content = conversation_data['temporal_summary']
+            if conversation_data.get('total_hybrid_memories', 0) > 0:
+                temporal_content += f"\n\nMemory System: {conversation_data['total_hybrid_memories']} relevant memories retrieved"
+            
+            messages.append({
+                "role": "system",
+                "content": temporal_content
+            })
+        
+        # Get user nickname from enhanced context or database
+        nickname_added = False
+        if context.get('hybrid_memories'):
+            # Check if nickname is in hybrid memories
+            for memory in context['hybrid_memories']:
+                if 'name' in memory.get('metadata', {}) or 'nickname' in memory.get('content', '').lower():
+                    # Extract nickname from memory if available
+                    pass  # This could be enhanced further
+                    
+        if not nickname_added and user_id and hasattr(self, 'db_manager'):
+            try:
+                async with self.db_manager._pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT nickname FROM user_current_status WHERE user_id = $1",
+                        user_id
+                    )
+                    if row and row['nickname']:
+                        messages.append({
+                            "role": "system",
+                            "content": f"The user's name is {row['nickname']}. Use it naturally when appropriate."
+                        })
+            except Exception as e:
+                logger.warning(f"Could not fetch user nickname: {e}")
+        
+        # Anti-interrogation logic (same as original)
+        recent = conversation_data.get('recent_messages', [])
+        can_ask_question = True
+        if recent:
+            recent_nadia_messages = [m for m in recent if m.get('role') == 'assistant']
+            if recent_nadia_messages and '?' in recent_nadia_messages[-1].get('content', ''):
+                can_ask_question = False
+        
+        if not can_ask_question:
+            messages.append({
+                "role": "system", 
+                "content": "Important: You asked a question recently. This time make a statement, share something relatable, or show empathy. Do NOT ask another question."
+            })
+        
+        # Add recent conversation history
+        if recent:
+            history_context = ""
+            for msg in recent:
+                role = "User" if msg['role'] == 'user' else "Nadia"
+                history_context += f"\n{role}: {msg['content']}"
+            
+            messages.append({
+                "role": "system",
+                "content": f"Recent conversation (last 10 messages):{history_context}"
+            })
+        
+        # Add the enhanced user message
+        messages.append({
+            "role": "user",
+            "content": enhanced_message
+        })
+        
+        # Estimate and log token usage for monitoring
+        total_content = " ".join([msg.get('content', '') for msg in messages])
+        estimated_tokens = len(total_content.split())
+        
+        # Trim if exceeding context window
+        if estimated_tokens > context_window_tokens:
+            logger.warning(f"Prompt exceeds context window ({estimated_tokens} > {context_window_tokens}), trimming...")
+            # Remove some of the less important context while keeping core persona and user message
+            if len(messages) > 3:
+                # Remove middle messages but keep system persona and user message
+                messages = [messages[0]] + messages[-2:]  # Keep first (persona) and last two (recent context + user message)
+        
         return messages
 
     def _build_refinement_prompt(self, raw_response: str, original_message: str,

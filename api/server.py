@@ -218,8 +218,8 @@ async def get_reviews_from_redis(limit: int = 20) -> List[ReviewResponse]:
     try:
         r = await redis.from_url(config.redis_url)
         
-        # Get review IDs from sorted set (newest timestamp first)
-        review_ids = await r.zrevrange("nadia_review_queue", 0, limit - 1)
+        # Get review IDs from sorted set (oldest timestamp first)
+        review_ids = await r.zrange("nadia_review_queue", 0, limit - 1)
         
         reviews = []
         for review_id in review_ids:
@@ -883,10 +883,9 @@ async def approve_review(
         database_mode = os.getenv("DATABASE_MODE", "normal")
         
         if database_mode != "skip":
-            # Start the review (mark as reviewing)
+            # Start the review (mark as reviewing) - this can fail if already processed
             started = await db_manager.start_review(review_id, current_user['email'])
-            if not started:
-                raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
+            # Don't fail here - let approve_review handle the state check
 
         # NUEVO: Check if CTA was inserted and create CTA data
         cta_data = None
@@ -919,7 +918,17 @@ async def approve_review(
             )
 
             if not approved:
-                raise HTTPException(status_code=400, detail="Failed to approve review")
+                # If approval failed, it might be because the review was already processed
+                # Remove from Redis queue and return appropriate error
+                try:
+                    r = await redis.from_url(config.redis_url)
+                    await r.zrem("nadia_review_queue", review_id)
+                    await r.hdel("nadia_review_items", review_id)
+                    await r.aclose()
+                except Exception as e:
+                    logger.error(f"Error cleaning Redis after failed approval: {e}")
+                
+                raise HTTPException(status_code=400, detail="Review not found or already processed")
 
         # Send the approved message via Redis notification and cleanup
         # The bot will pick it up and send to user
@@ -962,16 +971,25 @@ async def reject_review(review_id: str, request: ReviewRejectionRequest):
         database_mode = os.getenv("DATABASE_MODE", "normal")
         
         if database_mode != "skip":
-            # Start the review (mark as reviewing)
+            # Start the review (mark as reviewing) - this can fail if already processed
             started = await db_manager.start_review(review_id, "api_user")  # TODO: Add proper user auth
-            if not started:
-                raise HTTPException(status_code=404, detail="Review not found or already being reviewed")
+            # Don't fail here - let reject_review handle the state check
 
             # Reject the review
             rejected = await db_manager.reject_review(review_id, request.reviewer_notes)
 
             if not rejected:
-                raise HTTPException(status_code=400, detail="Failed to reject review")
+                # If rejection failed, it might be because the review was already processed
+                # Remove from Redis queue and return appropriate error
+                try:
+                    r = await redis.from_url(config.redis_url)
+                    await r.zrem("nadia_review_queue", review_id)
+                    await r.hdel("nadia_review_items", review_id)
+                    await r.aclose()
+                except Exception as e:
+                    logger.error(f"Error cleaning Redis after failed rejection: {e}")
+                
+                raise HTTPException(status_code=400, detail="Review not found or already processed")
 
         # Remove from Redis queue regardless of database mode
         try:
@@ -1108,6 +1126,45 @@ async def calculate_daily_savings(model_stats: dict) -> float:
     except Exception as e:
         logger.error(f"Error calculating savings: {e}")
         return 0.0
+
+
+@app.post("/reviews/cleanup")
+async def cleanup_review_queue(current_user: dict = Depends(get_current_user)):
+    """Clean up already processed reviews from Redis queue."""
+    try:
+        # Check if database mode is skip
+        database_mode = os.getenv("DATABASE_MODE", "normal")
+        
+        if database_mode == "skip":
+            return {"message": "Queue cleanup not available in skip mode", "cleaned": 0}
+        
+        r = await redis.from_url(config.redis_url)
+        
+        # Get all review IDs from Redis queue
+        review_ids = await r.zrange("nadia_review_queue", 0, -1)
+        
+        cleaned_count = 0
+        for review_id in review_ids:
+            # Check status in database
+            async with db_manager._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT review_status FROM interactions WHERE id = $1",
+                    review_id
+                )
+                
+                # If not pending, remove from Redis
+                if not row or row['review_status'] in ['approved', 'rejected']:
+                    await r.zrem("nadia_review_queue", review_id)
+                    await r.hdel("nadia_review_items", review_id)
+                    cleaned_count += 1
+        
+        await r.aclose()
+        
+        return {"message": f"Cleaned {cleaned_count} processed reviews from queue", "cleaned": cleaned_count}
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up review queue: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/metrics/dashboard")

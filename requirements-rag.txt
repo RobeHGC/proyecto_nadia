@@ -7,7 +7,12 @@ pymongo>=4.0.0
 
 # Vector operations and embeddings
 numpy>=1.21.0
-openai>=1.0.0
+openai>=1.0.0  # Optional: for cloud embeddings (can be replaced by local)
+
+# Local embeddings (CPU-optimized for Ryzen 7 5700)
+sentence-transformers>=2.2.0
+torch>=1.9.0  # CPU-only version is sufficient
+transformers>=4.21.0
 
 # Optional: Advanced vector databases (choose one)
 # chromadb>=0.4.0  # Local vector database

@@ -126,7 +126,7 @@ class DatabaseManager:
                 FROM interactions i
                 LEFT JOIN user_current_status ucs ON i.user_id = ucs.user_id
                 WHERE i.review_status = 'pending' AND i.priority_score >= $1
-                ORDER BY i.created_at DESC
+                ORDER BY i.created_at ASC
                 LIMIT $2
                 """,
                 min_priority, limit
@@ -156,14 +156,19 @@ class DatabaseManager:
                            cta_data: Optional[Dict[str, Any]] = None) -> bool:
         """Approve a review with final bubbles and metadata."""
         async with self._pool.acquire() as conn:
-            # First, get the user_id from the interaction
+            # First, get the user_id and current status from the interaction
             interaction = await conn.fetchrow(
-                "SELECT user_id FROM interactions WHERE id = $1",
+                "SELECT user_id, review_status FROM interactions WHERE id = $1",
                 interaction_id
             )
             
             if not interaction:
                 logger.error(f"Interaction {interaction_id} not found")
+                return False
+            
+            # If already processed, return False to indicate it shouldn't be in queue
+            if interaction['review_status'] in ['approved', 'rejected']:
+                logger.warning(f"Interaction {interaction_id} already processed with status {interaction['review_status']}")
                 return False
             
             user_id = interaction['user_id']
@@ -177,20 +182,21 @@ class DatabaseManager:
             # Use the current status or default to PROSPECT
             current_customer_status = user_status['customer_status'] if user_status else 'PROSPECT'
             
-            # Update the interaction with the current customer status
+            # Update the interaction - allow from both 'pending' and 'reviewing' states
             result = await conn.execute(
                 """
                 UPDATE interactions
                 SET review_status = 'approved',
                     review_completed_at = NOW(),
-                    review_time_seconds = EXTRACT(EPOCH FROM (NOW() - review_started_at)),
+                    review_time_seconds = EXTRACT(EPOCH FROM (NOW() - COALESCE(review_started_at, created_at))),
                     final_bubbles = $1,
                     edit_tags = $2,
                     quality_score = $3,
                     reviewer_notes = $4,
                     messages_sent_at = NOW(),
-                    customer_status = $6
-                WHERE id = $5 AND review_status = 'reviewing'
+                    customer_status = $6,
+                    review_started_at = COALESCE(review_started_at, NOW())
+                WHERE id = $5 AND review_status IN ('pending', 'reviewing')
                 """,
                 final_bubbles, edit_tags, quality_score, reviewer_notes, interaction_id, current_customer_status
             )
@@ -200,14 +206,31 @@ class DatabaseManager:
     async def reject_review(self, interaction_id: str, reviewer_notes: Optional[str] = None) -> bool:
         """Reject a review."""
         async with self._pool.acquire() as conn:
+            # First check if interaction exists and current status
+            interaction = await conn.fetchrow(
+                "SELECT review_status FROM interactions WHERE id = $1",
+                interaction_id
+            )
+            
+            if not interaction:
+                logger.error(f"Interaction {interaction_id} not found")
+                return False
+            
+            # If already processed, return False to indicate it shouldn't be in queue
+            if interaction['review_status'] in ['approved', 'rejected']:
+                logger.warning(f"Interaction {interaction_id} already processed with status {interaction['review_status']}")
+                return False
+            
+            # Update the interaction - allow from both 'pending' and 'reviewing' states
             result = await conn.execute(
                 """
                 UPDATE interactions
                 SET review_status = 'rejected',
                     review_completed_at = NOW(),
-                    review_time_seconds = EXTRACT(EPOCH FROM (NOW() - review_started_at)),
-                    reviewer_notes = $1
-                WHERE id = $2 AND review_status = 'reviewing'
+                    review_time_seconds = EXTRACT(EPOCH FROM (NOW() - COALESCE(review_started_at, created_at))),
+                    reviewer_notes = $1,
+                    review_started_at = COALESCE(review_started_at, NOW())
+                WHERE id = $2 AND review_status IN ('pending', 'reviewing')
                 """,
                 reviewer_notes, interaction_id
             )

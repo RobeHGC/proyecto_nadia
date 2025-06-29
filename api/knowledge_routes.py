@@ -8,6 +8,8 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 # RAG imports (with fallback if not available)
 try:
     from knowledge.rag_manager import RAGManager, get_rag_manager
@@ -15,10 +17,17 @@ try:
     from knowledge.vector_search import SearchQuery, SearchResult
     RAG_AVAILABLE = True
 except ImportError:
-    logging.getLogger(__name__).warning("RAG system not available for API routes")
+    logger.warning("RAG system not available for API routes")
     RAG_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
+    # Define dummy classes when RAG is not available
+    class RAGManager:
+        pass
+    class KnowledgeDocument:
+        pass
+    class SearchQuery:
+        pass
+    class SearchResult:
+        pass
 
 # Create router
 knowledge_router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])

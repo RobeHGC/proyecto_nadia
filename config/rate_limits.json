@@ -43,8 +43,10 @@
     "/reviews/*/reject": 0.5,
     "/api/analytics/*": 1.5,
     "/api/dashboard/*": 1.5,
+    "/metrics/dashboard": 3.0,
     "/health": 5.0,
     "/mcp/health": 3.0,
+    "/api/mcp/health*": 3.0,
     "/api/models/reload": 0.1,
     "/quarantine/batch-process": 0.2
   },

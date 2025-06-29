@@ -1,0 +1,53 @@
+[
+  {
+    "dimension": "Semántica",
+    "tipo_dato": "Hechos y temas",
+    "pregunta_clave": "¿De qué trata este recuerdo?",
+    "sistema_almacenamiento": "MongoDB",
+    "modelo_datos": "Campo \"semantic_embedding\" en documento BSON",
+    "metodo_recuperacion": "RAG (búsqueda vectorial por similitud)"
+  },
+  {
+    "dimension": "Episódica y Social",
+    "tipo_dato": "Eventos y contexto",
+    "pregunta_clave": [
+      "¿Qué pasó con usuario_X?",
+      "¿Quién estaba?"
+    ],
+    "sistema_almacenamiento": "MongoDB",
+    "modelo_datos": "Campos \"participants\", \"timestamp\", etc. en documento BSON",
+    "metodo_recuperacion": "CAG (consulta estructurada por filtros)"
+  },
+  {
+    "dimension": "Emocional",
+    "tipo_dato": "Sentimientos y estados",
+    "pregunta_clave": "¿Cómo se sintió el usuario/agente?",
+    "sistema_almacenamiento": "MongoDB",
+    "modelo_datos": "Sub-documento \"affective_state\" dentro del recuerdo episódico",
+    "metodo_recuperacion": "Acoplada a la recuperación CAG"
+  },
+  {
+    "dimension": "Procedimental",
+    "tipo_dato": "Reglas y prompts",
+    "pregunta_clave": "¿Cuál es el protocolo a seguir aquí?",
+    "sistema_almacenamiento": "PostgreSQL",
+    "modelo_datos": "Tabla \"prompt_library\"",
+    "metodo_recuperacion": "Consulta SQL por \"prompt_id\" o \"trigger_condition\""
+  },
+  {
+    "dimension": "Configuración y Usuarios",
+    "pregunta_clave": "¿Cuál es la configuración del agente?",
+    "sistema_almacenamiento": "PostgreSQL",
+    "modelo_datos": "Tablas \"agent_config\" y \"users\"",
+    "metodo_recuperacion": "Consulta SQL directa"
+  }
+]
+""MongoDB se utiliza como el almacén principal de "recuerdos vividos", aprovechando su flexibilidad para guardar objetos complejos y multidimensionales.
+
+PostgreSQL se utiliza para datos altamente estructurados, reglas de negocio y configuración del agente, donde la integridad y la consistencia son críticas.
+
+RAG es la estrategia de búsqueda para encontrar recuerdos basados en su significado semántico.
+
+CAG es la estrategia para encontrar recuerdos basados en su contexto relacional y episódico.
+
+Las consultas SQL se utilizan para acceder a la memoria procedimental (reglas y prompts) y a los datos operativos del agente."""

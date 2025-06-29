@@ -6,7 +6,7 @@
 class MCPHealthWidget {
     constructor(containerId) {
         this.containerId = containerId;
-        this.refreshInterval = 30000; // 30 seconds
+        this.refreshInterval = 60000; // 60 seconds (reduced from 30s to prevent rate limiting)
         this.intervalId = null;
         this.init();
     }
