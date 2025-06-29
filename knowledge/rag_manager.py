@@ -7,6 +7,13 @@ from dataclasses import dataclass
 
 from .mongodb_manager import MongoDBManager, get_mongodb_manager, UserPreference
 from .embeddings_service import EmbeddingsService, get_embeddings_service
+
+# Import local embeddings service for fallback/alternative
+try:
+    from .local_embeddings_service import LocalEmbeddingsService, get_local_embeddings_service
+    LOCAL_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    LOCAL_EMBEDDINGS_AVAILABLE = False
 from .vector_search import VectorSearchEngine, get_vector_search_engine, SearchQuery, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -38,12 +45,16 @@ class RAGManager:
         self, 
         mongodb_manager: MongoDBManager = None,
         embeddings_service: EmbeddingsService = None,
-        vector_search: VectorSearchEngine = None
+        vector_search: VectorSearchEngine = None,
+        use_local_embeddings: bool = False,
+        local_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     ):
         """Initialize RAG manager."""
         self.mongodb_manager = mongodb_manager
         self.embeddings_service = embeddings_service
         self.vector_search = vector_search
+        self.use_local_embeddings = use_local_embeddings
+        self.local_model = local_model
         self._initialized = False
         
         # RAG configuration
@@ -53,7 +64,8 @@ class RAGManager:
             "max_documents": 3,  # Max documents to include in context
             "include_conversation_history": True,
             "include_user_preferences": True,
-            "context_weight": 0.3  # How much to weight context vs original prompt
+            "context_weight": 0.3,  # How much to weight context vs original prompt
+            "embeddings_type": "local" if use_local_embeddings else "openai"
         }
     
     async def initialize(self):
@@ -61,8 +73,18 @@ class RAGManager:
         if not self._initialized:
             if self.mongodb_manager is None:
                 self.mongodb_manager = await get_mongodb_manager()
+            
+            # Initialize embeddings service based on configuration
             if self.embeddings_service is None:
-                self.embeddings_service = get_embeddings_service()
+                if self.use_local_embeddings and LOCAL_EMBEDDINGS_AVAILABLE:
+                    logger.info(f"Initializing local embeddings service with model: {self.local_model}")
+                    self.embeddings_service = get_local_embeddings_service(self.local_model)
+                else:
+                    if self.use_local_embeddings and not LOCAL_EMBEDDINGS_AVAILABLE:
+                        logger.warning("Local embeddings requested but not available, falling back to OpenAI")
+                    logger.info("Initializing OpenAI embeddings service")
+                    self.embeddings_service = get_embeddings_service()
+            
             if self.vector_search is None:
                 self.vector_search = await get_vector_search_engine()
             self._initialized = True
@@ -379,10 +401,23 @@ Instructions: Use the relevant context above to provide a more informed and pers
 _rag_manager: Optional[RAGManager] = None
 
 
-async def get_rag_manager() -> RAGManager:
+async def get_rag_manager(
+    use_local_embeddings: bool = False,
+    local_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+) -> RAGManager:
     """Get global RAG manager instance."""
     global _rag_manager
     if _rag_manager is None:
-        _rag_manager = RAGManager()
+        _rag_manager = RAGManager(
+            use_local_embeddings=use_local_embeddings,
+            local_model=local_model
+        )
         await _rag_manager.initialize()
     return _rag_manager
+
+
+async def get_local_rag_manager(
+    model: str = "sentence-transformers/all-MiniLM-L6-v2"
+) -> RAGManager:
+    """Get RAG manager instance configured for local embeddings."""
+    return await get_rag_manager(use_local_embeddings=True, local_model=model)
