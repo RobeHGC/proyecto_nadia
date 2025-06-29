@@ -17,6 +17,14 @@ from llms.stable_prefix_manager import StablePrefixManager
 from memory.user_memory import UserMemoryManager
 from utils.config import Config
 
+# RAG imports (with fallback if not available)
+try:
+    from knowledge.rag_manager import RAGManager, get_rag_manager
+    RAG_AVAILABLE = True
+except ImportError:
+    logger.warning("RAG system not available - continuing without knowledge enhancement")
+    RAG_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +95,13 @@ class SupervisorAgent:
                 model=config.llm2_model,
                 api_key=config.openai_api_key if config.llm2_provider == "openai" else config.gemini_api_key
             )
+        
+        # Initialize RAG system (optional)
+        self.rag_manager = None
+        self._rag_initialized = False
+        if RAG_AVAILABLE:
+            # RAG will be initialized on first use to avoid blocking startup
+            logger.info("RAG system available - will initialize on first use")
     
     def _load_llm1_persona(self, persona_file: str = "persona/nadia_llm1.md"):
         """Carga la persona de LLM1 desde archivo externo."""
@@ -151,6 +166,17 @@ class SupervisorAgent:
         """Recarga la persona de LLM1 desde archivo (útil para hot-reload)."""
         self._load_llm1_persona(persona_file)
         logger.info("LLM1 persona reloaded successfully")
+    
+    async def _initialize_rag(self):
+        """Initialize RAG system on first use."""
+        if RAG_AVAILABLE and not self._rag_initialized:
+            try:
+                self.rag_manager = await get_rag_manager()
+                self._rag_initialized = True
+                logger.info("RAG system initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize RAG system: {e}")
+                self.rag_manager = None
     
     def set_db_manager(self, db_manager):
         """Sets the database manager for accessing user information."""
@@ -218,6 +244,21 @@ class SupervisorAgent:
             timestamp=datetime.now(),
             conversation_context=context
         )
+
+        # RAG Learning: Store interaction for future knowledge enhancement
+        if self.rag_manager and self._rag_initialized:
+            try:
+                # Store the interaction for learning (async in background)
+                final_response = " ".join(llm2_bubbles)
+                await self.rag_manager.store_user_interaction(
+                    user_id=user_id,
+                    user_message=message,
+                    ai_response=final_response,
+                    conversation_id=f"review_{review_item.id}"
+                )
+                logger.debug(f"Stored RAG interaction for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store RAG interaction: {e}")
 
         logger.info(f"Generated review item {review_item.id} with priority {priority:.2f}")
         return review_item
@@ -357,10 +398,38 @@ class SupervisorAgent:
         return self._split_into_bubbles(refined)
 
     async def _build_creative_prompt(self, message: str, context: Dict[str, Any]) -> list:
-        """Builds prompt for LLM-1 (Gemini) with full NADIA persona."""
+        """Builds prompt for LLM-1 (Gemini) with full NADIA persona and RAG enhancement."""
         
-        # Usar la persona cargada desde archivo
+        # Initialize RAG if available and not already done
+        await self._initialize_rag()
+        
+        # Start with base persona
         nadia_persona = self._llm1_persona
+        
+        # RAG Enhancement: Get relevant knowledge context
+        rag_enhanced_message = message
+        if self.rag_manager:
+            try:
+                user_id = context.get('user_id', '')
+                rag_response = await self.rag_manager.enhance_prompt_with_context(
+                    user_message=message,
+                    user_id=user_id,
+                    conversation_context=context
+                )
+                
+                if rag_response.success and rag_response.context_used.confidence_score > 0.3:
+                    rag_enhanced_message = rag_response.enhanced_prompt
+                    logger.info(f"RAG enhanced prompt with confidence {rag_response.context_used.confidence_score:.2f}")
+                    
+                    # Store interaction for learning
+                    # This will be done after response generation
+                    context['rag_context'] = rag_response.context_used
+                else:
+                    logger.debug("RAG context not confident enough, using original message")
+                    
+            except Exception as e:
+                logger.warning(f"RAG enhancement failed, using original message: {e}")
+                rag_enhanced_message = message
 
         # Obtener conversación con resumen temporal
         conversation_data = {"recent_messages": [], "temporal_summary": ""}
@@ -436,10 +505,10 @@ class SupervisorAgent:
                 "content": f"Recent conversation (last 10 messages):{history_context}"
             })
         
-        # Finalmente el mensaje del usuario
+        # Finalmente el mensaje del usuario (potentially RAG-enhanced)
         messages.append({
             "role": "user",
-            "content": message
+            "content": rag_enhanced_message
         })
 
         return messages

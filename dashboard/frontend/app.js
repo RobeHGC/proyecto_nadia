@@ -70,11 +70,11 @@ class HITLDashboard {
         this.setupEventListeners();
         // Don't setup stars on init - wait until a review is selected
         
-        // Auto-refresh every 30 seconds
+        // Auto-refresh every 60 seconds (reduced from 30s to prevent rate limiting)
         setInterval(() => {
             this.loadMetrics();
             this.loadReviews();
-        }, 30000);
+        }, 60000);
     }
     
     async loadEditTaxonomy() {

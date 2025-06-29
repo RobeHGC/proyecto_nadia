@@ -1,0 +1,18 @@
+# RAG System Dependencies for NADIA
+# Install with: pip install -r requirements-rag.txt
+
+# MongoDB support
+motor>=3.0.0
+pymongo>=4.0.0
+
+# Vector operations and embeddings
+numpy>=1.21.0
+openai>=1.0.0
+
+# Optional: Advanced vector databases (choose one)
+# chromadb>=0.4.0  # Local vector database
+# pinecone-client>=2.0.0  # Cloud vector database
+# weaviate-client>=3.0.0  # Enterprise vector database
+
+# Development and testing
+pytest-asyncio>=0.21.0

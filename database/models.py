@@ -126,7 +126,7 @@ class DatabaseManager:
                 FROM interactions i
                 LEFT JOIN user_current_status ucs ON i.user_id = ucs.user_id
                 WHERE i.review_status = 'pending' AND i.priority_score >= $1
-                ORDER BY i.priority_score DESC, i.created_at ASC
+                ORDER BY i.created_at DESC
                 LIMIT $2
                 """,
                 min_priority, limit

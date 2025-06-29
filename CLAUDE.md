@@ -76,10 +76,10 @@ NADIA: Human-in-the-Loop conversational AI for Telegram. Bot persona: friendly 2
 
 ### Running Services
 ```bash
-# API server (port 8000) - Multiple startup options:
-PYTHONPATH=/home/rober/projects/chatbot_nadia python -m api.server   # Standard method
-python start_api_server.py                                          # Simplified startup script
-python test_api_startup.py                                          # Diagnostic tool if issues
+# API server (port 8000) - FIXED: Use nadia-env environment
+~/.pyenv/versions/nadia-env/bin/python start_api_server.py          # Recommended method
+# OR with nadia-env activated:
+# python start_api_server.py
 
 # Dashboard (port 3000) 
 python dashboard/backend/static_server.py

@@ -57,3 +57,7 @@ REQUIREMENTS.md
 node_modules/
 package-lock.json
 package.json
+
+# Miscellaneous
+bitacora/propuesta_ultima.md
+propuesta2.md

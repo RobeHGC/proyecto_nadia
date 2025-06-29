@@ -39,7 +39,7 @@ class Config:
     # Adaptive Window Message Pacing
     enable_typing_pacing: bool = True
     typing_window_delay: float = 1.5
-    typing_debounce_delay: float = 5.0
+    typing_debounce_delay: float = 120.0
     min_batch_size: int = 2
     max_batch_size: int = 5
     max_batch_wait_time: float = 30.0
@@ -94,7 +94,7 @@ class Config:
             # Adaptive Window Message Pacing configuration
             enable_typing_pacing=os.getenv("ENABLE_TYPING_PACING", "true").lower() == "true",
             typing_window_delay=float(cls._clean_env_value(os.getenv("TYPING_WINDOW_DELAY", "1.5"))),
-            typing_debounce_delay=float(cls._clean_env_value(os.getenv("TYPING_DEBOUNCE_DELAY", "5.0"))),
+            typing_debounce_delay=float(cls._clean_env_value(os.getenv("TYPING_DEBOUNCE_DELAY", "120.0"))),
             min_batch_size=int(cls._clean_env_value(os.getenv("MIN_BATCH_SIZE", "2"))),
             max_batch_size=int(cls._clean_env_value(os.getenv("MAX_BATCH_SIZE", "5"))),
             max_batch_wait_time=float(cls._clean_env_value(os.getenv("MAX_BATCH_WAIT_TIME", "30.0"))),

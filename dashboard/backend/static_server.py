@@ -41,6 +41,16 @@ async def get_data_analytics_js():
     """Serve the data-analytics.js file"""
     return FileResponse(str(frontend_dir / "data-analytics.js"))
 
+@app.get("/knowledge-management.html")
+async def get_knowledge_management():
+    """Serve the knowledge-management.html file"""
+    return FileResponse(str(frontend_dir / "knowledge-management.html"))
+
+@app.get("/knowledge-management.js")
+async def get_knowledge_management_js():
+    """Serve the knowledge-management.js file"""
+    return FileResponse(str(frontend_dir / "knowledge-management.js"))
+
 @app.get("/index.html")
 async def get_index():
     """Serve the index.html file for 'Back to Dashboard' button"""

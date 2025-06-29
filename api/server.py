@@ -25,6 +25,14 @@ from utils.config import Config
 from .data_analytics import analytics_manager, AnalyticsDataRequest, BackupRequest, CleanDataRequest
 from .auth_routes import router as auth_router
 from api.middleware.auth import AuthenticationMiddleware, get_current_user
+
+# Knowledge management imports (with fallback)
+try:
+    from .knowledge_routes import knowledge_router
+    KNOWLEDGE_ROUTES_AVAILABLE = True
+except ImportError:
+    logger.warning("Knowledge management routes not available - RAG system dependencies missing")
+    KNOWLEDGE_ROUTES_AVAILABLE = False
 from api.middleware.rbac import require_permission, require_admin, require_reviewer
 from auth.rbac_manager import Permission
 
@@ -210,7 +218,7 @@ async def get_reviews_from_redis(limit: int = 20) -> List[ReviewResponse]:
     try:
         r = await redis.from_url(config.redis_url)
         
-        # Get review IDs from sorted set (highest priority first)
+        # Get review IDs from sorted set (newest timestamp first)
         review_ids = await r.zrevrange("nadia_review_queue", 0, limit - 1)
         
         reviews = []
@@ -264,6 +272,11 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
 
 # Include authentication routes
 app.include_router(auth_router)
+
+# Include knowledge management routes (if available)
+if KNOWLEDGE_ROUTES_AVAILABLE:
+    app.include_router(knowledge_router)
+    logger.info("Knowledge management routes included")
 
 # Include rate limiting monitoring routes
 from api.rate_limit_monitor import router as rate_limit_router
@@ -763,7 +776,7 @@ async def get_user_memory(user_id: str):
 # ════════════════════════════════════════════════════════════════
 
 @app.get("/reviews/pending", response_model=List[ReviewResponse])
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def get_pending_reviews(
     request: Request,
     limit: int = Query(20, ge=1, le=100),

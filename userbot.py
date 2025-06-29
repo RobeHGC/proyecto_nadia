@@ -382,8 +382,9 @@ class UserBot(RedisConnectionMixin):
             # Store in hash (for retrieval)
             await r.hset(self.review_items_key, review_item.id, json.dumps(review_data))
 
-            # Add to priority queue (sorted set by priority score)
-            await r.zadd(self.review_queue_key, {review_item.id: review_item.priority})
+            # Add to chronological queue (sorted set by timestamp - newest first)
+            timestamp_score = review_item.timestamp.timestamp()
+            await r.zadd(self.review_queue_key, {review_item.id: timestamp_score})
 
             # NUEVO: Also save to PostgreSQL for dashboard
             try:
@@ -393,7 +394,7 @@ class UserBot(RedisConnectionMixin):
                 logger.error("Error saving to database: %s", db_exc)
                 # Continue with Redis-only operation
 
-            logger.info("ReviewItem %s queued with priority %.2f", review_item.id, review_item.priority)
+            logger.info("ReviewItem %s queued chronologically at %s", review_item.id, review_item.timestamp.isoformat())
 
         except Exception as exc:
             logger.error("Error queueing review item: %s", exc)
